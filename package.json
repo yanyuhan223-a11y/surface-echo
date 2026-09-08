@@ -1,0 +1,1 @@
+{"name":"ling-cage-echo-demo","private":true,"version":"1.0.0","type":"module","scripts":{"dev":"vite --host 0.0.0.0","build":"vite build","test":"node tests/game.test.js && node tests/source.test.js"},"dependencies":{"@vitejs/plugin-react":"latest","lucide-react":"latest","react":"latest","react-dom":"latest","three":"^0.185.1","typescript":"latest","vite":"latest"}}
