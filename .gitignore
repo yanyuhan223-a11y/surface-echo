@@ -1,6 +1,4 @@
 node_modules/
 dist/
+*.tsbuildinfo
 .DS_Store
-*.log
-_shot.html
-*.bak
