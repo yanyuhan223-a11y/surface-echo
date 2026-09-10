@@ -36,7 +36,7 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
 }
 
 export async function applyHallMaterials(model: THREE.Object3D, renderer: THREE.WebGLRenderer) {
-  const texture = await new THREE.TextureLoader().loadAsync('/assets/industrial-steel.png');
+  const texture = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}assets/industrial-steel.png`);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const rough = texture.clone(); rough.colorSpace = THREE.NoColorSpace; rough.needsUpdate = true;

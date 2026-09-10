@@ -135,7 +135,7 @@ export class HallWorld {
   private async load() {
     try {
       this.state.progress = 5; this.emit();
-      const gltf = await new GLTFLoader().loadAsync('/assets/surface_echo_hall.glb', event => {
+      const gltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}assets/surface_echo_hall.glb`, event => {
         this.state.progress = 8 + 64 * (event.total ? event.loaded / event.total : Math.min(.95, event.loaded / 9_000_000)); this.emit();
       });
       if (this.disposed) return;
