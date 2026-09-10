@@ -88,7 +88,7 @@ export class HallWorld {
     this.composer.addPass(new OutputPass());
     this.film = new ShaderPass(FilmShader); this.composer.addPass(this.film);
     this.resize(); this.bindInput(); this.registerAgentControls();
-    this.camera.position.set(0, 2.6, 21.2); this.camera.lookAt(0, 6.4, 0);
+    this.camera.position.set(0, 4.35, 24.5); this.camera.lookAt(0, 5.15, 0);
     this.renderer.setAnimationLoop(this.animate);
     void this.load();
   }
@@ -337,7 +337,7 @@ export class HallWorld {
     if (this.state.mode !== 'paused' && !this.state.activeRecord) this.time += dt;
     if (this.state.mode === 'intro') {
       this.character.visible = false;
-      this.camera.position.set(Math.sin(this.time * .075) * .45, 2.6, 21.2); this.camera.lookAt(0, 6.4, 0);
+      this.camera.position.set(Math.sin(this.time * .06) * .3, 4.35, 24.5); this.camera.lookAt(0, 5.15, 0);
     } else if (this.state.mode === 'tour') {
       this.character.visible = false;
       const t = this.time - this.tourStart, a = .2 + t * .04;
