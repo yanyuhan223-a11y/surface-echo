@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { GameUIProps, MoveDirection } from './contracts';
 import './game-ui.css';
 
-type IconName = 'sound' | 'muted' | 'view' | 'pause' | 'arrow' | 'close' | 'check' | 'signal';
+type IconName = 'sound' | 'muted' | 'view' | 'pause' | 'arrow' | 'close' | 'check' | 'signal' | 'bolt' | 'file' | 'book' | 'film' | 'replay';
 function Icon({ name, className = '' }: { name: IconName; className?: string }) {
   const paths: Record<IconName, ReactNode> = {
     sound: <><path d="M10 5 5 9H2v6h3l5 4z"/><path d="M14 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14"/></>,
@@ -14,6 +14,11 @@ function Icon({ name, className = '' }: { name: IconName; className?: string }) 
     close: <><path d="m6 6 12 12M6 18 18 6"/></>,
     check: <><path d="m5 12 4 4L19 6"/></>,
     signal: <><path d="M4 18v-3m5 3v-6m5 6V9m5 9V5M3 4l18 17"/></>,
+    bolt: <><path d="M13 3 4 14h7l-1 7 9-11h-7z" fill="currentColor" stroke="none"/></>,
+    file: <><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></>,
+    book: <><path d="M4 5c3-1 6-1 8 1 2-2 5-2 8-1v13c-3-1-6-1-8 1-2-2-5-2-8-1z"/><path d="M12 7v12"/></>,
+    film: <><rect x="4" y="5" width="16" height="14"/><path d="M4 9h4M4 15h4M16 9h4M16 15h4M9 5v14M15 5v14"/></>,
+    replay: <><path d="M4 12a8 8 0 1 1 2.3 5.6M4 12V6m0 6h6"/><path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none"/></>,
   };
   return <svg className={`echo-icon ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -74,15 +79,55 @@ export function GameUI(props: GameUIProps) {
       </nav>
     </header>
 
-    {mode === 'intro' && <section className="echo-intro" aria-labelledby="echo-title">
-      <div className="echo-chapter-line"><span>序章</span><i/><span>重返信号源</span></div>
-      <h1 id="echo-title">地表回声</h1><p className="echo-english-title">SURFACE ECHO</p>
-      <p className="echo-intro-copy">灯光仍在运行。<br/>寂静之中，有什么正在等待回应。</p>
-      <div className="echo-intro-actions"><button className="echo-button echo-primary" disabled={!ready} onClick={onStart}><span>{ready ? '进入大厅' : '正在进入场景'}</span>{ready ? <Icon name="arrow"/> : <span className="echo-mono">{loaded}%</span>}</button>
-        <button className="echo-button echo-secondary" disabled={!ready} onClick={onTour}><Icon name="view"/>镜头漫游</button></div>
-      {!ready && <div className="echo-loading" role="progressbar" aria-label="场景载入" aria-valuenow={loaded} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${loaded}%` }}/></div>}
-      <p className="echo-intro-note">第三人称探索 · 角色奔跑 · 任务交互</p>
-      <p className="echo-orientation-note">横屏探索，视野更开阔</p>
+    {mode === 'intro' && <section className="echo-hub" aria-labelledby="echo-title">
+      <div className="echo-hub-scrim"/>
+      <img className="echo-hub-portrait" src={`${import.meta.env.BASE_URL}assets/mark-portrait.png`} alt="马克 · 灯塔地表勘探队" draggable={false}/>
+
+      <div className="echo-hub-top">
+        <div className="echo-hub-profile">
+          <div className="echo-hub-avatar" style={{ ['--mark-portrait' as string]: `url(${import.meta.env.BASE_URL}assets/mark-portrait.png)` }}><i/></div>
+          <div className="echo-hub-id">
+            <div className="echo-hub-name"><b>马克</b><small>MARK</small></div>
+            <div className="echo-hub-level"><span>勘探度 Lv.4</span><em><i style={{ width: '64%' }}/></em></div>
+          </div>
+        </div>
+        <div className="echo-hub-resources">
+          <span className="echo-hub-chip"><Mark/>240</span>
+          <span className="echo-hub-chip echo-hub-chip-energy"><Icon name="bolt"/>42</span>
+        </div>
+      </div>
+
+      <div className="echo-hub-meta">
+        <b>灯塔历 · 第 417 日</b>
+        <small>深夜 03:12</small>
+        <span className="echo-hub-place">◇ 灯塔 · 传送大厅 DECK 04</span>
+      </div>
+
+      <nav className="echo-hub-rail" aria-label="档案功能">
+        <button type="button"><Icon name="file"/><small>回声档案</small></button>
+        <button type="button"><Icon name="book"/><small>角色故事</small></button>
+        <button type="button"><Icon name="film"/><small>影像残片</small></button>
+        <button type="button" onClick={onTour} disabled={!ready}><Icon name="replay"/><small>镜头漫游</small></button>
+        <button type="button" onClick={onToggleMute} aria-pressed={!muted}><Icon name={muted ? 'muted' : 'sound'}/><small>{muted ? '静音' : '音效'}</small></button>
+      </nav>
+
+      <div className="echo-hub-stage">
+        <p className="echo-hub-quote">「至少，这里还有东西醒着。」</p>
+        <h1 id="echo-title" className="echo-hub-headline">今天，要去哪一层寻找回声？</h1>
+        <button className="echo-button echo-primary echo-hub-cta" disabled={!ready} onClick={onStart}>
+          <span>{ready ? '进入大厅 · 开始勘探' : '正在进入场景'}</span>
+          {ready ? <Icon name="arrow"/> : <span className="echo-mono">{loaded}%</span>}
+        </button>
+        {!ready && <div className="echo-loading echo-hub-loading" role="progressbar" aria-label="场景载入" aria-valuenow={loaded} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${loaded}%` }}/></div>}
+      </div>
+
+      <nav className="echo-hub-tabs" aria-label="主菜单">
+        <span>日志</span>
+        <span>装备</span>
+        <span className="is-active">勘探</span>
+        <span>档案</span>
+        <span>信号</span>
+      </nav>
     </section>}
 
     {(mode === 'play' || mode === 'tour') && <>
