@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { constrainMovement, activationStep, floorHeight, nearestTarget } from './logic.ts';
+import { nearestNpc, questReadyToTurnIn, resolveQuestStatus } from './quests.ts';
 
 test('long frames cannot carry the player through the pillar or outer wall', () => {
   const across = constrainMovement({ x: 0, z: 2.8 }, { x: 0, z: -4 });
@@ -29,4 +30,23 @@ test('investigation is proximity gated and picks the nearest terminal', () => {
   assert.equal(nearestTarget({ x: -8, z: 12 })?.id, 'power');
   assert.equal(nearestTarget({ x: 0, z: 5 })?.id, 'core');
   assert.equal(nearestTarget({ x: 15, z: 10 }), null);
+});
+test('NPCs are greeted only within range and by proximity', () => {
+  assert.equal(nearestNpc({ x: 4.6, z: 12.5 })?.id, 'warden');
+  assert.equal(nearestNpc({ x: 13.5, z: 8.5 })?.id, 'ranger');
+  assert.equal(nearestNpc({ x: 0, z: 0 }), null);
+});
+test('quest turn-in gates depend on world facts', () => {
+  assert.equal(questReadyToTurnIn('warden', { status: 'active', powered: false, echoCount: 0, ending: null }), false);
+  assert.equal(questReadyToTurnIn('warden', { status: 'active', powered: true, echoCount: 0, ending: null }), true);
+  assert.equal(questReadyToTurnIn('ranger', { status: 'active', powered: true, echoCount: 3, ending: null }), false);
+  assert.equal(questReadyToTurnIn('ranger', { status: 'active', powered: true, echoCount: 4, ending: null }), true);
+  assert.equal(questReadyToTurnIn('signal', { status: 'active', powered: true, echoCount: 6, ending: null }), false);
+  assert.equal(questReadyToTurnIn('signal', { status: 'active', powered: true, echoCount: 6, ending: 'human' }), true);
+});
+test('resolved quest status promotes active to ready when condition met', () => {
+  assert.equal(resolveQuestStatus('warden', { status: 'active', powered: true, echoCount: 0, ending: null }), 'ready');
+  assert.equal(resolveQuestStatus('warden', { status: 'active', powered: false, echoCount: 0, ending: null }), 'active');
+  assert.equal(resolveQuestStatus('ranger', { status: 'available', powered: false, echoCount: 0, ending: null }), 'available');
+  assert.equal(resolveQuestStatus('signal', { status: 'done', powered: true, echoCount: 6, ending: 'mimic' }), 'done');
 });

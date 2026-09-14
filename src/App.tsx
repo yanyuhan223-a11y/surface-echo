@@ -11,7 +11,7 @@ export default function App() {
     if (!container.current) return;
     try {
       const instance = new HallWorld(container.current, setState); world.current = instance;
-      if (import.meta.env.DEV) Object.assign(window, { hallDiagnostics: () => instance.diagnostics() });
+      if (import.meta.env.DEV) Object.assign(window, { hallDiagnostics: () => instance.diagnostics(), hallWorld: instance });
       return () => { instance.dispose(); world.current = null; };
     } catch (error) {
       console.error(error); setState(s => ({ ...s, error: '此浏览器未能启动 WebGL。请开启硬件加速，或使用支持 WebGL 的浏览器重新打开。' }));
@@ -24,7 +24,8 @@ export default function App() {
       onToggleView={() => world.current?.toggleView()} onCloseRecord={() => world.current?.closeRecord()} onInteract={() => world.current?.interact()}
       onRestart={() => world.current?.restart()} onMove={(direction, pressed) => world.current?.move(direction, pressed)}
       onInteractionHold={pressed => world.current?.hold(pressed)} onCloseStory={() => world.current?.closeStory()}
-      onChooseStory={ending => world.current?.chooseStory(ending)}/>
+      onChooseStory={ending => world.current?.chooseStory(ending)}
+      onDialogueAction={action => action === 'close' ? world.current?.closeDialogue() : world.current?.dialogueAction(action)}/>
     {state.error && <div className="scene-error" role="alert"><h2>信号暂时中断</h2><p>{state.error}</p><button onClick={() => location.reload()}>重新载入</button></div>}
   </main>;
 }

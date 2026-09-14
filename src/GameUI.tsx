@@ -40,11 +40,11 @@ function MoveKey({ direction, label, onMove }: { direction: MoveDirection; label
 
 export function GameUI(props: GameUIProps) {
   const { mode, ready, progress, objective, investigated, target, activeRecord, toast, muted,
-    cinematic, overlooking, activation, activated, storyOpen, onStart, onTour, onPause, onResume, onToggleMute,
-    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory } = props;
+    cinematic, overlooking, activation, activated, storyOpen, dialogue, quests, onStart, onTour, onPause, onResume, onToggleMute,
+    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction } = props;
   const dialog = useRef<HTMLDivElement>(null);
   const isDialog = Boolean(activeRecord) || mode === 'paused';
-  const isExploring = mode === 'play' && !activeRecord && !storyOpen && !overlooking;
+  const isExploring = mode === 'play' && !activeRecord && !storyOpen && !overlooking && !dialogue;
   const amount = Math.max(0, Math.min(1, activation));
   const loaded = Math.round(Math.max(0, Math.min(100, progress)));
 
@@ -134,6 +134,14 @@ export function GameUI(props: GameUIProps) {
       <aside className="echo-objective" aria-label="当前探索目标"><div className="echo-section-label"><span>{mode === 'tour' ? '观察模式' : '当前目标'}</span><i/></div><p>{mode === 'tour' ? '沿着光，重新发现这座大厅' : objective}</p>
         <div className="echo-intel"><span>回声碎片</span><span className="echo-intel-dots" aria-label={`已调查 ${Math.min(6, investigated)} / 6 处`}>{[0, 1, 2, 3, 4, 5].map(index => <i key={index} className={index < investigated ? 'is-found' : ''}/>)}</span><span className="echo-mono">{Math.min(6, investigated).toString().padStart(2, '0')} / 06</span></div>
       </aside>
+      {mode === 'play' && !dialogue && quests.length > 0 && <aside className="echo-quests" aria-label="任务追踪">
+        <div className="echo-section-label"><span>任务日志</span><i/></div>
+        <ul>{quests.map(q => <li key={q.id} className={`echo-quest is-${q.status}`}>
+          <span className="echo-quest-dot" aria-hidden="true"/>
+          <div className="echo-quest-copy"><strong>{q.title}</strong><small>{q.status === 'done' ? '已完成' : q.status === 'ready' ? '可交付 · 返回 ' + q.npcName : q.status === 'active' ? q.objective : '待接取 · 找 ' + q.npcName}</small></div>
+          <em className="echo-quest-flag">{q.status === 'done' ? '✓' : q.status === 'ready' ? '!' : q.status === 'active' ? '…' : '•'}</em>
+        </li>)}</ul>
+      </aside>}
       {mode === 'tour' || overlooking ? <div className="echo-tour-control"><span>{overlooking ? '高位观察中' : '镜头漫游中'}</span><button className="echo-button echo-secondary" onClick={overlooking ? onToggleView : onStart}>{overlooking ? '返回地面' : '开始探索'}<Icon name="arrow"/></button></div> : <div className="echo-controls"><span><kbd>W A S D</kbd> 移动角色</span><i/><span><kbd>Shift</kbd> 奔跑</span><i/><span>拖动镜头</span><i/><span><kbd>E</kbd> 执行任务</span></div>}
       <div className="echo-signal"><Icon name="signal"/><span>{activated ? '本地链路已接通' : '外部通讯中断'}</span></div>
     </>}
@@ -166,6 +174,25 @@ export function GameUI(props: GameUIProps) {
           <button onClick={() => onChooseStory('future')}><small>版本 03 · 悖论</small><strong>发送者是未来的自己</strong><span>逆向足迹与同源声音形成闭环。允许回声发生。</span><b>可信度 61%</b></button>
         </div>
         <p className="echo-story-warning">选择后，灯光、目标与大厅结局会被改写。</p>
+      </section>
+    </div>}
+
+    {dialogue && <div className="echo-dialog-layer echo-npc-layer">
+      <section className="echo-npc" role="dialog" aria-modal="true" aria-labelledby="echo-npc-title" style={{ ['--npc' as string]: dialogue.color }}>
+        <button className="echo-close" onClick={() => onDialogueAction('close')} aria-label="结束对话"><Icon name="close"/></button>
+        <div className="echo-npc-head">
+          <span className="echo-npc-avatar" aria-hidden="true"/>
+          <div><h2 id="echo-npc-title">{dialogue.npcName}</h2><small>{dialogue.npcRole}</small></div>
+        </div>
+        <div className="echo-npc-body">{dialogue.lines.map((l, i) => l.who
+          ? <p key={i}><b>{l.who}</b>{l.text}</p>
+          : <p key={i} className="echo-npc-narr">{l.text}</p>)}</div>
+        <div className="echo-npc-quest"><span className="echo-npc-quest-tag">任务</span>{dialogue.questTitle}</div>
+        <div className="echo-npc-actions">
+          {dialogue.action === 'accept' && <button className="echo-button echo-primary" onClick={() => onDialogueAction('accept')}>接受委托<Icon name="check"/></button>}
+          {dialogue.action === 'turnin' && <button className="echo-button echo-primary" onClick={() => onDialogueAction('turnin')}>交付任务<Icon name="check"/></button>}
+          <button className="echo-button echo-secondary" onClick={() => onDialogueAction('close')}>{dialogue.action === 'accept' ? '再想想' : '结束对话'}</button>
+        </div>
       </section>
     </div>}
 

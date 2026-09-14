@@ -11,6 +11,11 @@ import { createProps } from './props';
 import { HallAudio } from './Audio';
 import { investigations, nearestTarget, constrainMovement, floorHeight } from './logic';
 import type { Direction, GameMode, RecordData } from './logic';
+import { createNpcs } from './npcs';
+import type { NpcVisual } from './npcs';
+import { npcQuests, nearestNpc, resolveQuestStatus, questReadyToTurnIn } from './quests';
+import type { NpcQuest, QuestStatus, DialogueLine } from './quests';
+import type { DialogueView, QuestView } from '../contracts';
 
 export interface WorldState {
   mode: GameMode; ready: boolean; progress: number; objective: string; investigated: number;
@@ -18,10 +23,12 @@ export interface WorldState {
   toast: string | null; muted: boolean; cinematic: boolean; activation: number; activated: boolean; overlooking: boolean;
   storyOpen: boolean; ending: 'human' | 'mimic' | 'future' | null;
   error: string | null;
+  dialogue: DialogueView | null; quests: QuestView[];
 }
 export const initialState: WorldState = {
   mode: 'intro', ready: false, progress: 0, objective: '寻找配电终端，恢复备用供电', investigated: 0,
   target: null, activeRecord: null, toast: null, muted: false, cinematic: true, activation: 0, activated: false, overlooking: false, storyOpen: false, ending: null, error: null,
+  dialogue: null, quests: [],
 };
 
 export class HallWorld {
@@ -44,6 +51,9 @@ export class HallWorld {
   private keys = new Set<string>();
   private abort = new AbortController();
   private inspected = new Set<string>();
+  private npcVisuals: (NpcVisual & { draw: (g: string, c: string) => void })[] = [];
+  private questStatus = new Map<string, QuestStatus>();
+  private activeNpcId: string | null = null;
   private disposed = false;
   private previousTime = 0;
   private time = 0;
@@ -77,6 +87,9 @@ export class HallWorld {
     this.lights = setupLighting(this.scene, this.renderer);
     this.dust = createDust(this.scene, this.mobile); this.shafts = createLightShafts(this.scene); this.props = createProps(this.scene);
     const avatar = this.createCharacter(); this.character = avatar.group; this.characterParts = avatar.parts; this.scene.add(this.character);
+    this.npcVisuals = createNpcs(this.scene);
+    for (const q of npcQuests) this.questStatus.set(q.id, q.id === 'warden' ? 'available' : 'available');
+    this.refreshQuestViews();
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: this.mobile ? 0 : 2 });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -249,7 +262,10 @@ export class HallWorld {
   };
   hold = (_pressed: boolean) => {};
   interact = () => {
-    if (this.state.mode !== 'play' || this.state.activeRecord || this.viewMode !== 'floor') return;
+    if (this.state.mode !== 'play' || this.state.activeRecord || this.state.dialogue || this.state.storyOpen || this.viewMode !== 'floor') return;
+    // NPCs take priority when you are standing close to one
+    const npc = nearestNpc(this.player);
+    if (npc) { this.openDialogue(npc); return; }
     const target = nearestTarget(this.player); if (!target) return;
     if (target.id === 'core') {
       if (this.state.ending) { this.toast('你写下的版本已经成为大厅的新现实。仍可继续寻找遗漏的回声。', 5); return; }
@@ -267,8 +283,63 @@ export class HallWorld {
   restart = () => {
     this.clearInput(); this.inspected.clear(); this.state = { ...initialState, ready: this.state.ready, progress: 100, muted: this.state.muted };
     this.activationTime = -1; this.viewMode = 'floor'; this.player.set(0, .08, 15.9); this.yaw = 0; this.pitch = .17; this.character.rotation.y = Math.PI;
+    this.activeNpcId = null; this.questStatus.clear(); for (const q of npcQuests) this.questStatus.set(q.id, 'available');
+    this.refreshQuestViews();
     this.emit();
   };
+
+  // ---- NPC dialogue & quests ----
+  private questFacts() {
+    return { powered: this.inspected.has('power'), echoCount: this.inspected.size, ending: this.state.ending };
+  }
+  private refreshQuestViews() {
+    const facts = this.questFacts();
+    this.state.quests = npcQuests.map(q => {
+      const raw = this.questStatus.get(q.id) ?? 'available';
+      const status = resolveQuestStatus(q.id, { status: raw, ...facts });
+      return { id: q.id, title: q.questTitle, objective: q.objective, npcName: q.npcName, status };
+    });
+  }
+  private lineView(npc: NpcQuest, lines: DialogueLine[], action: 'accept' | 'turnin' | 'close'): DialogueView {
+    return { npcName: npc.npcName, npcRole: npc.npcRole, color: '#' + npc.color.toString(16).padStart(6, '0'), lines, action, questTitle: npc.questTitle };
+  }
+  private openDialogue(npc: NpcQuest) {
+    const facts = this.questFacts();
+    const raw = this.questStatus.get(npc.id) ?? 'available';
+    this.activeNpcId = npc.id;
+    this.audio.tone('scan');
+    if (raw === 'done') {
+
+      this.state.dialogue = this.lineView(npc, npc.afterDone, 'close');
+    } else if (raw === 'active') {
+      if (questReadyToTurnIn(npc.id, { status: 'active', ...facts })) {
+
+        this.state.dialogue = this.lineView(npc, npc.turnIn, 'turnin');
+      } else {
+
+        this.state.dialogue = this.lineView(npc, npc.inProgress, 'close');
+      }
+    } else {
+
+      this.state.dialogue = this.lineView(npc, npc.offer, 'accept');
+    }
+    this.state.target = null; this.clearInput(); this.emit();
+  }
+  dialogueAction = (action: 'accept' | 'turnin' | 'close') => {
+    const npc = npcQuests.find(q => q.id === this.activeNpcId);
+    if (npc) {
+      if (action === 'accept') {
+        this.questStatus.set(npc.id, 'active');
+        this.state.objective = npc.objective;
+        this.toast(`任务已接取 · ${npc.questTitle}`, 3.5);
+      } else if (action === 'turnin') {
+        this.questStatus.set(npc.id, 'done');
+        this.toast(npc.reward, 4.5);
+      }
+    }
+    this.state.dialogue = null; this.activeNpcId = null; this.refreshQuestViews(); this.clearInput(); this.emit();
+  };
+  closeDialogue = () => { this.state.dialogue = null; this.activeNpcId = null; this.clearInput(); this.emit(); };
 
   private resize = () => {
     const w = this.container.clientWidth, h = this.container.clientHeight;
@@ -318,14 +389,22 @@ export class HallWorld {
     const rayDirection = desiredCamera.clone().sub(focus), rayLength = rayDirection.length();
     this.cameraRay.set(focus, rayDirection.normalize()); this.cameraRay.far = rayLength;
     const obstruction = this.cameraRay.intersectObjects(this.scene.children, true).find(hit => {
-      let object: THREE.Object3D | null = hit.object; while (object) { if (object === this.character) return false; object = object.parent; }
-      return hit.distance > .65 && !(hit.object instanceof THREE.Points);
+      let object: THREE.Object3D | null = hit.object; while (object) { if (object === this.character || object.userData.npc) return false; object = object.parent; }
+      return hit.distance > .65 && !(hit.object instanceof THREE.Points) && !(hit.object instanceof THREE.Sprite);
     });
     if (obstruction) desiredCamera = focus.clone().addScaledVector(rayDirection, Math.max(.85, obstruction.distance - .35));
     this.camera.position.lerp(desiredCamera, 1 - Math.exp(-dt * 8));
     this.camera.lookAt(focus.clone().addScaledVector(forward, 2.2));
-    const target = nearestTarget(this.player);
-    this.state.target = target ? { id: target.id, title: target.title, hint: target.id === 'core' ? this.state.ending ? '已写入新的现实' : !this.inspected.has('power') ? '需先恢复备用供电' : this.inspected.size >= 4 ? '打开叙事重构台' : `还需 ${4 - this.inspected.size} 条回声` : this.inspected.has(target.id) ? '再次查看记录' : '调查 / 读取记录' } : null;
+    const npc = nearestNpc(this.player);
+    if (npc) {
+      const raw = this.questStatus.get(npc.id) ?? 'available';
+      const st = resolveQuestStatus(npc.id, { status: raw, ...this.questFacts() });
+      const hint = st === 'done' ? '交谈' : st === 'ready' ? '交付任务' : st === 'active' ? '进行中 · 交谈' : '接取任务';
+      this.state.target = { id: 'npc:' + npc.id, title: npc.npcName, hint };
+    } else {
+      const target = nearestTarget(this.player);
+      this.state.target = target ? { id: target.id, title: target.title, hint: target.id === 'core' ? this.state.ending ? '已写入新的现实' : !this.inspected.has('power') ? '需先恢复备用供电' : this.inspected.size >= 4 ? '打开叙事重构台' : `还需 ${4 - this.inspected.size} 条回声` : this.inspected.has(target.id) ? '再次查看记录' : '调查 / 读取记录' } : null;
+    }
     this.state.activation = 0;
   }
 
@@ -349,6 +428,29 @@ export class HallWorld {
     for (const [id, marker] of Object.entries(this.props.markers)) {
       marker.lookAt(this.camera.position); marker.position.y = 2.12 + Math.sin(this.time * 1.5) * .045;
       marker.visible = this.state.mode === 'play' && !this.state.activeRecord && this.viewMode === 'floor' && (!this.inspected.has(id) || id === 'core') && !(id === 'core' && this.state.activated);
+    }
+    // NPC hologram markers + live quest status
+    if (this.npcVisuals.length) {
+      const facts = this.questFacts();
+      const showNpc = this.state.mode === 'play' && this.viewMode === 'floor';
+      for (const v of this.npcVisuals) {
+        const npc = npcQuests.find(q => q.id === v.id)!;
+        const raw = this.questStatus.get(v.id) ?? 'available';
+        const st = resolveQuestStatus(v.id, { status: raw, ...facts });
+        const glyph = st === 'ready' ? '✓' : st === 'active' ? '…' : st === 'done' ? '·' : '!';
+        const mColor = st === 'ready' ? '#8effc0' : st === 'done' ? '#7f9799' : '#' + npc.color.toString(16).padStart(6, '0');
+        const key = glyph + mColor;
+        if ((v as { _mk?: string })._mk !== key) { v.draw(glyph, mColor); (v as { _mk?: string })._mk = key; }
+        v.marker.position.y = 2.62 + Math.sin(this.time * 1.6 + v.group.position.x) * .07;
+        v.marker.visible = showNpc && st !== 'done';
+        const s = 1 + Math.sin(this.time * 2 + v.group.position.z) * .04;
+        v.ring.scale.setScalar(s);
+        (v.ring.material as THREE.MeshBasicMaterial).opacity = .34 + Math.sin(this.time * 2.2) * .12;
+        v.group.visible = showNpc || this.state.mode === 'intro';
+        v.group.position.y = Math.sin(this.time * 1.1 + v.group.position.x) * .04;
+      }
+      // keep the "ready to turn in" highlight fresh in the tracker
+      this.refreshQuestViews();
     }
     let pulse = 1;
     if (this.activationTime >= 0) { const t = this.time - this.activationTime; pulse = 1.15 + Math.exp(-t * .9) * 1.2 * Math.max(0, Math.sin(t * 3)); }

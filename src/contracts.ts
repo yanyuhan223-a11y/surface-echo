@@ -13,6 +13,26 @@ export interface InvestigationRecord {
   body: string[];
 }
 
+export type QuestStatus = 'locked' | 'available' | 'active' | 'ready' | 'done';
+
+export interface DialogueView {
+  npcName: string;
+  npcRole: string;
+  color: string;
+  lines: { who: string; text: string }[];
+  /** which button to show at the end of this dialogue */
+  action: 'accept' | 'turnin' | 'close';
+  questTitle: string;
+}
+
+export interface QuestView {
+  id: string;
+  title: string;
+  objective: string;
+  npcName: string;
+  status: QuestStatus;
+}
+
 export interface GameUIProps {
   mode: GameMode;
   ready: boolean;
@@ -29,6 +49,9 @@ export interface GameUIProps {
   activated: boolean;
   storyOpen: boolean;
   ending: 'human' | 'mimic' | 'future' | null;
+  error: string | null;
+  dialogue: DialogueView | null;
+  quests: QuestView[];
   onStart: () => void;
   onTour: () => void;
   onPause: () => void;
@@ -43,4 +66,5 @@ export interface GameUIProps {
   onInteractionHold?: (pressed: boolean) => void;
   onCloseStory: () => void;
   onChooseStory: (ending: 'human' | 'mimic' | 'future') => void;
+  onDialogueAction: (action: 'accept' | 'turnin' | 'close') => void;
 }

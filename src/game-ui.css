@@ -109,3 +109,54 @@
   .echo-hub-stage{max-width:640px;margin-left:auto;margin-right:auto}
   .echo-hub-tabs{max-width:1180px;width:100%;margin-left:auto;margin-right:auto;padding-left:clamp(28px,5vw,90px);padding-right:clamp(28px,5vw,90px)}
 }
+
+/* ===== NPC quest tracker (left, under objective) ===== */
+.echo-quests{position:absolute;left:var(--echo-edge);top:calc(50% + 30px);transform:translateY(-50%);width:min(280px,42vw);z-index:12;background:linear-gradient(150deg,rgba(6,20,24,.72),rgba(4,12,15,.5));border:1px solid var(--echo-line);border-radius:14px;padding:13px 15px 14px;backdrop-filter:blur(9px);pointer-events:auto}
+.echo-quests>.echo-section-label{margin-bottom:9px}
+.echo-quests ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.echo-quest{display:flex;align-items:flex-start;gap:9px;padding:7px 8px;border:1px solid rgba(150,214,216,.14);border-radius:9px;background:rgba(8,26,30,.4);transition:border-color .25s,background .25s,opacity .25s}
+.echo-quest-dot{flex:0 0 8px;width:8px;height:8px;margin-top:5px;border-radius:50%;background:#5c777a;box-shadow:0 0 0 3px rgba(90,120,122,.18)}
+.echo-quest-copy{flex:1;min-width:0}
+.echo-quest-copy strong{display:block;font-size:12.5px;font-weight:500;letter-spacing:.06em;color:#e4f3f2}
+.echo-quest-copy small{display:block;margin-top:3px;font-size:10px;line-height:1.5;color:var(--echo-muted);letter-spacing:.04em}
+.echo-quest-flag{flex:0 0 auto;font-size:13px;font-style:normal;color:#7f9799;line-height:1.2}
+.echo-quest.is-available{opacity:.9}
+.echo-quest.is-available .echo-quest-dot{background:var(--echo-cyan);box-shadow:0 0 0 3px rgba(110,200,205,.2)}
+.echo-quest.is-active{border-color:rgba(150,214,216,.3)}
+.echo-quest.is-active .echo-quest-dot{background:var(--echo-amber);box-shadow:0 0 0 3px rgba(211,172,114,.22)}
+.echo-quest.is-active .echo-quest-flag{color:var(--echo-amber)}
+.echo-quest.is-ready{border-color:rgba(120,255,180,.5);background:rgba(16,44,34,.5);box-shadow:0 0 18px rgba(90,220,150,.18)}
+.echo-quest.is-ready .echo-quest-dot{background:#7effb4;box-shadow:0 0 0 3px rgba(120,255,180,.28);animation:echo-quest-pulse 1.4s ease-in-out infinite}
+.echo-quest.is-ready .echo-quest-flag{color:#8effc0;font-weight:700}
+.echo-quest.is-done{opacity:.5}
+.echo-quest.is-done .echo-quest-copy strong{text-decoration:line-through;text-decoration-color:rgba(200,220,220,.4)}
+.echo-quest.is-done .echo-quest-flag{color:#6bd6a0}
+@keyframes echo-quest-pulse{0%,100%{box-shadow:0 0 0 3px rgba(120,255,180,.28)}50%{box-shadow:0 0 0 6px rgba(120,255,180,.08)}}
+
+/* ===== NPC dialogue overlay ===== */
+.echo-npc-layer{align-items:flex-end;justify-content:center}
+.echo-npc{--npc:#63e6f0;position:relative;width:min(660px,92vw);margin-bottom:max(46px,calc(env(safe-area-inset-bottom) + 30px));background:linear-gradient(155deg,rgba(7,22,26,.94),rgba(4,12,15,.9));border:1px solid color-mix(in srgb,var(--npc) 45%,transparent);border-radius:18px;padding:22px 26px 24px;backdrop-filter:blur(16px);box-shadow:0 24px 70px rgba(0,0,0,.6),0 0 40px color-mix(in srgb,var(--npc) 18%,transparent);animation:echo-npc-in .32s cubic-bezier(.16,.8,.3,1) both}
+@keyframes echo-npc-in{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+.echo-npc-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.echo-npc-avatar{width:46px;height:46px;flex:0 0 46px;border-radius:50%;border:1.5px solid var(--npc);background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--npc) 70%,transparent),transparent 70%),rgba(6,18,22,.9);box-shadow:0 0 18px color-mix(in srgb,var(--npc) 45%,transparent),inset 0 0 12px color-mix(in srgb,var(--npc) 30%,transparent);position:relative}
+.echo-npc-avatar:after{content:"";position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);width:14px;height:20px;border-radius:50% 50% 50% 50%/60% 60% 40% 40%;background:color-mix(in srgb,var(--npc) 80%,#fff 10%);opacity:.85;filter:blur(.3px)}
+.echo-npc-head h2{margin:0;font-size:19px;font-weight:500;letter-spacing:.1em;color:#eaf6f5}
+.echo-npc-head small{display:block;margin-top:3px;font-size:10.5px;letter-spacing:.16em;color:var(--npc)}
+.echo-npc-body{display:flex;flex-direction:column;gap:11px;max-height:34vh;overflow-y:auto;padding-right:4px}
+.echo-npc-body p{margin:0;font-size:14px;line-height:1.75;color:#d3e5e4;letter-spacing:.03em}
+.echo-npc-body p b{color:var(--npc);font-weight:600;margin-right:.5em;letter-spacing:.08em}
+.echo-npc-narr{color:#8fa8a9!important;font-style:italic;font-size:12.5px!important}
+.echo-npc-quest{display:flex;align-items:center;gap:10px;margin:16px 0 4px;padding:10px 13px;border:1px dashed color-mix(in srgb,var(--npc) 40%,transparent);border-radius:10px;font-size:13px;letter-spacing:.06em;color:#e4f3f2;background:color-mix(in srgb,var(--npc) 7%,transparent)}
+.echo-npc-quest-tag{font-size:10px;letter-spacing:.14em;padding:3px 8px;border-radius:5px;background:color-mix(in srgb,var(--npc) 30%,transparent);color:#f0fbfa}
+.echo-npc-actions{display:flex;gap:12px;margin-top:18px;flex-wrap:wrap}
+.echo-npc-actions .echo-primary{background:color-mix(in srgb,var(--npc) 26%,rgba(8,24,28,.9));border-color:color-mix(in srgb,var(--npc) 60%,transparent)}
+.echo-npc-actions .echo-primary:hover{background:color-mix(in srgb,var(--npc) 40%,rgba(8,24,28,.9));box-shadow:0 0 22px color-mix(in srgb,var(--npc) 40%,transparent)}
+
+@media (max-width:650px){
+  .echo-quests{top:auto;bottom:max(150px,calc(env(safe-area-inset-bottom) + 128px));transform:none;width:min(240px,60vw);padding:10px 12px 11px}
+  .echo-quest-copy strong{font-size:11.5px}
+  .echo-quest-copy small{font-size:9px}
+  .echo-npc{width:94vw;margin-bottom:max(20px,env(safe-area-inset-bottom));padding:18px 18px 20px}
+  .echo-npc-body{max-height:40vh}
+  .echo-npc-body p{font-size:13px}
+}
