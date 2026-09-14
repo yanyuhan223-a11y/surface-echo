@@ -40,8 +40,8 @@ function MoveKey({ direction, label, onMove }: { direction: MoveDirection; label
 
 export function GameUI(props: GameUIProps) {
   const { mode, ready, progress, objective, investigated, target, activeRecord, toast, muted,
-    cinematic, overlooking, activation, activated, storyOpen, dialogue, quests, onStart, onTour, onPause, onResume, onToggleMute,
-    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction } = props;
+    cinematic, overlooking, activation, activated, storyOpen, dialogue, quests, progressStats, reward, onStart, onTour, onPause, onResume, onToggleMute,
+    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction, onCloseReward } = props;
   const dialog = useRef<HTMLDivElement>(null);
   const isDialog = Boolean(activeRecord) || mode === 'paused';
   const isExploring = mode === 'play' && !activeRecord && !storyOpen && !overlooking && !dialogue;
@@ -88,12 +88,12 @@ export function GameUI(props: GameUIProps) {
           <div className="echo-hub-avatar" style={{ ['--mark-portrait' as string]: `url(${import.meta.env.BASE_URL}assets/mark-portrait.png)` }}><i/></div>
           <div className="echo-hub-id">
             <div className="echo-hub-name"><b>马克</b><small>MARK</small></div>
-            <div className="echo-hub-level"><span>勘探度 Lv.4</span><em><i style={{ width: '64%' }}/></em></div>
+            <div className="echo-hub-level"><span>勘探度 Lv.{progressStats.level}</span><em><i style={{ width: `${Math.round(progressStats.levelInto / progressStats.levelSpan * 100)}%` }}/></em></div>
           </div>
         </div>
         <div className="echo-hub-resources">
-          <span className="echo-hub-chip"><Mark/>240</span>
-          <span className="echo-hub-chip echo-hub-chip-energy"><Icon name="bolt"/>42</span>
+          <span className="echo-hub-chip"><Mark/>{progressStats.echo}</span>
+          <span className="echo-hub-chip echo-hub-chip-energy"><Icon name="bolt"/>{progressStats.energy}</span>
         </div>
       </div>
 
@@ -135,12 +135,19 @@ export function GameUI(props: GameUIProps) {
         <div className="echo-intel"><span>回声碎片</span><span className="echo-intel-dots" aria-label={`已调查 ${Math.min(6, investigated)} / 6 处`}>{[0, 1, 2, 3, 4, 5].map(index => <i key={index} className={index < investigated ? 'is-found' : ''}/>)}</span><span className="echo-mono">{Math.min(6, investigated).toString().padStart(2, '0')} / 06</span></div>
       </aside>
       {mode === 'play' && !dialogue && quests.length > 0 && <aside className="echo-quests" aria-label="任务追踪">
-        <div className="echo-section-label"><span>任务日志</span><i/></div>
-        <ul>{quests.map(q => <li key={q.id} className={`echo-quest is-${q.status}`}>
-          <span className="echo-quest-dot" aria-hidden="true"/>
-          <div className="echo-quest-copy"><strong>{q.title}</strong><small>{q.status === 'done' ? '已完成' : q.status === 'ready' ? '可交付 · 返回 ' + q.npcName : q.status === 'active' ? q.objective : '待接取 · 找 ' + q.npcName}</small></div>
-          <em className="echo-quest-flag">{q.status === 'done' ? '✓' : q.status === 'ready' ? '!' : q.status === 'active' ? '…' : '•'}</em>
-        </li>)}</ul>
+        <div className="echo-section-label"><span>任务日志</span><i/><b className="echo-quest-count">{progressStats.questsDone} / {progressStats.questsTotal}</b></div>
+        <ul>{quests.map(q => {
+          const showBar = q.status === 'active' || q.status === 'ready';
+          return <li key={q.id} className={`echo-quest is-${q.status}`}>
+            <span className="echo-quest-dot" aria-hidden="true"/>
+            <div className="echo-quest-copy">
+              <strong>{q.title}{showBar && <span className="echo-quest-num">{q.current}/{q.goal}</span>}</strong>
+              <small>{q.status === 'done' ? '已完成' : q.status === 'ready' ? '目标达成 · 返回 ' + q.npcName + ' 领取奖励' : q.status === 'active' ? q.objective : '待接取 · 找 ' + q.npcName}</small>
+              {showBar && <span className="echo-quest-bar" aria-label={`进度 ${q.current}/${q.goal}`}><i style={{ width: `${Math.round(q.current / q.goal * 100)}%` }}/></span>}
+            </div>
+            <em className="echo-quest-flag">{q.status === 'done' ? '✓' : q.status === 'ready' ? '!' : q.status === 'active' ? '…' : '•'}</em>
+          </li>;
+        })}</ul>
       </aside>}
       {mode === 'tour' || overlooking ? <div className="echo-tour-control"><span>{overlooking ? '高位观察中' : '镜头漫游中'}</span><button className="echo-button echo-secondary" onClick={overlooking ? onToggleView : onStart}>{overlooking ? '返回地面' : '开始探索'}<Icon name="arrow"/></button></div> : <div className="echo-controls"><span><kbd>W A S D</kbd> 移动角色</span><i/><span><kbd>Shift</kbd> 奔跑</span><i/><span>拖动镜头</span><i/><span><kbd>E</kbd> 执行任务</span></div>}
       <div className="echo-signal"><Icon name="signal"/><span>{activated ? '本地链路已接通' : '外部通讯中断'}</span></div>
@@ -193,6 +200,24 @@ export function GameUI(props: GameUIProps) {
           {dialogue.action === 'turnin' && <button className="echo-button echo-primary" onClick={() => onDialogueAction('turnin')}>交付任务<Icon name="check"/></button>}
           <button className="echo-button echo-secondary" onClick={() => onDialogueAction('close')}>{dialogue.action === 'accept' ? '再想想' : '结束对话'}</button>
         </div>
+      </section>
+    </div>}
+
+    {reward && <div className="echo-dialog-layer echo-reward-layer">
+      <section className={`echo-reward ${reward.allDone ? 'is-final' : ''}`} role="dialog" aria-modal="true" aria-labelledby="echo-reward-title" style={{ ['--npc' as string]: reward.color }}>
+        <div className="echo-reward-glow" aria-hidden="true"/>
+        <div className="echo-reward-ribbon">{reward.allDone ? '全部委托达成' : '任务完成'}</div>
+        <h2 id="echo-reward-title">{reward.questTitle}</h2>
+        <p className="echo-reward-from">来自 {reward.npcName} 的回报</p>
+        {reward.leveledUp && <div className="echo-reward-levelup"><span>勘探度提升</span><b>Lv.{reward.newLevel}</b></div>}
+        <ul className="echo-reward-grid">
+          <li><span className="echo-reward-gain">+{reward.exp}</span><small>勘探经验</small></li>
+          <li><span className="echo-reward-gain"><Mark/>+{reward.echo}</span><small>回声值</small></li>
+          <li><span className="echo-reward-gain"><Icon name="bolt"/>+{reward.energy}</span><small>能量</small></li>
+        </ul>
+        <div className="echo-reward-unlock"><em>◆</em>{reward.unlock}</div>
+        {reward.allDone && <p className="echo-reward-final-copy">三段委托全部完成——大厅重新有了光、有了名字，也有了一个属于你的结局。</p>}
+        <button className="echo-button echo-primary" onClick={onCloseReward}>{reward.allDone ? '铭记这一刻' : '收下回报'}<Icon name="check"/></button>
       </section>
     </div>}
 

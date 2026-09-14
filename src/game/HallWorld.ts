@@ -13,9 +13,9 @@ import { investigations, nearestTarget, constrainMovement, floorHeight } from '.
 import type { Direction, GameMode, RecordData } from './logic';
 import { createNpcs } from './npcs';
 import type { NpcVisual } from './npcs';
-import { npcQuests, nearestNpc, resolveQuestStatus, questReadyToTurnIn } from './quests';
+import { npcQuests, nearestNpc, resolveQuestStatus, questReadyToTurnIn, questProgress, levelFromExp } from './quests';
 import type { NpcQuest, QuestStatus, DialogueLine } from './quests';
-import type { DialogueView, QuestView } from '../contracts';
+import type { DialogueView, QuestView, PlayerProgress, RewardView } from '../contracts';
 
 export interface WorldState {
   mode: GameMode; ready: boolean; progress: number; objective: string; investigated: number;
@@ -24,11 +24,18 @@ export interface WorldState {
   storyOpen: boolean; ending: 'human' | 'mimic' | 'future' | null;
   error: string | null;
   dialogue: DialogueView | null; quests: QuestView[];
+  /** cumulative exp granted by quests */
+  exp: number; echo: number; energy: number;
+  progressStats: PlayerProgress; reward: RewardView | null;
 }
+const BASE_ECHO = 40, BASE_ENERGY = 20;
 export const initialState: WorldState = {
   mode: 'intro', ready: false, progress: 0, objective: '寻找配电终端，恢复备用供电', investigated: 0,
   target: null, activeRecord: null, toast: null, muted: false, cinematic: true, activation: 0, activated: false, overlooking: false, storyOpen: false, ending: null, error: null,
   dialogue: null, quests: [],
+  exp: 0, echo: BASE_ECHO, energy: BASE_ENERGY,
+  progressStats: { level: 1, levelInto: 0, levelSpan: 300, echo: BASE_ECHO, energy: BASE_ENERGY, questsDone: 0, questsTotal: npcQuests.length },
+  reward: null,
 };
 
 export class HallWorld {
@@ -254,7 +261,7 @@ export class HallWorld {
     } as const;
     const outcome = outcomes[ending]; this.state.storyOpen = false; this.state.ending = ending; this.state.activated = true; this.state.activation = 1;
     this.state.objective = outcome.objective; this.activationTime = this.time; this.props.glow.color.setHex(outcome.color); this.props.glow.emissive.setHex(outcome.color);
-    this.lights.core.color.setHex(outcome.color); this.audio.tone('power'); this.toast(outcome.text, 8); this.clearInput(); this.emit();
+    this.lights.core.color.setHex(outcome.color); this.audio.tone('power'); this.toast(outcome.text, 8); this.refreshQuestViews(); this.clearInput(); this.emit();
   };
   move = (direction: Direction, pressed: boolean) => {
     const key = { forward: 'KeyW', backward: 'KeyS', left: 'KeyA', right: 'KeyD' }[direction];
@@ -278,6 +285,7 @@ export class HallWorld {
     this.state.activeRecord = data.record; this.state.target = null; this.clearInput(); this.audio.tone('scan');
     if (data.id === 'power' && !this.state.ending) this.state.objective = '收集至少 4 条回声，在中央控制台重构事件';
     if (this.inspected.size >= 4 && !this.state.ending) this.state.objective = '返回中央控制台，写下你相信的真相';
+    this.refreshQuestViews();
     this.emit();
   };
   restart = () => {
@@ -297,8 +305,19 @@ export class HallWorld {
     this.state.quests = npcQuests.map(q => {
       const raw = this.questStatus.get(q.id) ?? 'available';
       const status = resolveQuestStatus(q.id, { status: raw, ...facts });
-      return { id: q.id, title: q.questTitle, objective: q.objective, npcName: q.npcName, status };
+      const p = questProgress(q.id, { status: raw, ...facts });
+      return { id: q.id, title: q.questTitle, objective: q.objective, npcName: q.npcName, status, current: p.current, goal: p.goal };
     });
+    this.refreshProgressStats();
+  }
+  private refreshProgressStats() {
+    const lv = levelFromExp(this.state.exp);
+    const done = [...this.questStatus.values()].filter(s => s === 'done').length;
+    this.state.progressStats = {
+      level: lv.level, levelInto: lv.into, levelSpan: lv.span,
+      echo: this.state.echo, energy: this.state.energy,
+      questsDone: done, questsTotal: npcQuests.length,
+    };
   }
   private lineView(npc: NpcQuest, lines: DialogueLine[], action: 'accept' | 'turnin' | 'close'): DialogueView {
     return { npcName: npc.npcName, npcRole: npc.npcRole, color: '#' + npc.color.toString(16).padStart(6, '0'), lines, action, questTitle: npc.questTitle };
@@ -331,14 +350,34 @@ export class HallWorld {
       if (action === 'accept') {
         this.questStatus.set(npc.id, 'active');
         this.state.objective = npc.objective;
-        this.toast(`任务已接取 · ${npc.questTitle}`, 3.5);
+        this.audio.tone('scan');
+        this.toast(`任务已接取 · ${npc.questTitle}`, 3);
       } else if (action === 'turnin') {
-        this.questStatus.set(npc.id, 'done');
-        this.toast(npc.reward, 4.5);
+        this.grantReward(npc);
       }
     }
     this.state.dialogue = null; this.activeNpcId = null; this.refreshQuestViews(); this.clearInput(); this.emit();
   };
+  /** Grant a quest's reward bundle, apply level-up, and open the settlement panel. */
+  private grantReward(npc: NpcQuest) {
+    this.questStatus.set(npc.id, 'done');
+    const before = levelFromExp(this.state.exp).level;
+    this.state.exp += npc.reward.exp;
+    this.state.echo += npc.reward.echo;
+    this.state.energy += npc.reward.energy;
+    const after = levelFromExp(this.state.exp).level;
+    const done = [...this.questStatus.values()].filter(s => s === 'done').length;
+    const allDone = done >= npcQuests.length;
+    this.audio.tone('power');
+    this.state.reward = {
+      questTitle: npc.questTitle, npcName: npc.npcName,
+      color: '#' + npc.color.toString(16).padStart(6, '0'),
+      exp: npc.reward.exp, echo: npc.reward.echo, energy: npc.reward.energy,
+      unlock: npc.reward.unlock, rewardTitle: npc.reward.title,
+      leveledUp: after > before, newLevel: after, allDone,
+    };
+  }
+  closeReward = () => { this.state.reward = null; this.clearInput(); this.emit(); };
   closeDialogue = () => { this.state.dialogue = null; this.activeNpcId = null; this.clearInput(); this.emit(); };
 
   private resize = () => {
@@ -474,7 +513,7 @@ export class HallWorld {
   };
 
   /** Read-only local diagnostics: real renderer state, never a gameplay shortcut. */
-  diagnostics() { return { ready: this.state.ready, mode: this.state.mode, player: this.player.toArray(), camera: this.camera.position.toArray(), heading: this.yaw * 180 / Math.PI, pitch: this.pitch * 180 / Math.PI, target: this.state.target?.id ?? null, record: this.state.activeRecord?.title ?? null, objective: this.state.objective, investigated: [...this.inspected], activation: this.state.activation, activated: this.state.activated, overlooking: this.state.overlooking, pixelRatio: this.renderer.getPixelRatio(), ao: this.ao.enabled }; }
+  diagnostics() { return { ready: this.state.ready, mode: this.state.mode, player: this.player.toArray(), camera: this.camera.position.toArray(), heading: this.yaw * 180 / Math.PI, pitch: this.pitch * 180 / Math.PI, target: this.state.target?.id ?? null, record: this.state.activeRecord?.title ?? null, objective: this.state.objective, investigated: [...this.inspected], activation: this.state.activation, activated: this.state.activated, overlooking: this.state.overlooking, pixelRatio: this.renderer.getPixelRatio(), ao: this.ao.enabled, quests: this.state.quests.map(q => ({ id: q.id, status: q.status, progress: `${q.current}/${q.goal}` })), progressStats: this.state.progressStats, reward: this.state.reward ? { title: this.state.reward.rewardTitle, exp: this.state.reward.exp, leveledUp: this.state.reward.leveledUp, allDone: this.state.reward.allDone } : null }; }
 
   private registerAgentControls() {
     const context = (document as Document & { modelContext?: { registerTool(tool: unknown, options?: { signal: AbortSignal }): void | Promise<void> } }).modelContext;

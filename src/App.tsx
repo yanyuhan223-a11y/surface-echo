@@ -25,7 +25,8 @@ export default function App() {
       onRestart={() => world.current?.restart()} onMove={(direction, pressed) => world.current?.move(direction, pressed)}
       onInteractionHold={pressed => world.current?.hold(pressed)} onCloseStory={() => world.current?.closeStory()}
       onChooseStory={ending => world.current?.chooseStory(ending)}
-      onDialogueAction={action => action === 'close' ? world.current?.closeDialogue() : world.current?.dialogueAction(action)}/>
+      onDialogueAction={action => action === 'close' ? world.current?.closeDialogue() : world.current?.dialogueAction(action)}
+      onCloseReward={() => world.current?.closeReward()}/>
     {state.error && <div className="scene-error" role="alert"><h2>信号暂时中断</h2><p>{state.error}</p><button onClick={() => location.reload()}>重新载入</button></div>}
   </main>;
 }

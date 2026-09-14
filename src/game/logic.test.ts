@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { constrainMovement, activationStep, floorHeight, nearestTarget } from './logic.ts';
-import { nearestNpc, questReadyToTurnIn, resolveQuestStatus } from './quests.ts';
+import { nearestNpc, questReadyToTurnIn, resolveQuestStatus, questProgress, levelFromExp } from './quests.ts';
 
 test('long frames cannot carry the player through the pillar or outer wall', () => {
   const across = constrainMovement({ x: 0, z: 2.8 }, { x: 0, z: -4 });
@@ -49,4 +49,23 @@ test('resolved quest status promotes active to ready when condition met', () => 
   assert.equal(resolveQuestStatus('warden', { status: 'active', powered: false, echoCount: 0, ending: null }), 'active');
   assert.equal(resolveQuestStatus('ranger', { status: 'available', powered: false, echoCount: 0, ending: null }), 'available');
   assert.equal(resolveQuestStatus('signal', { status: 'done', powered: true, echoCount: 6, ending: 'mimic' }), 'done');
+});
+test('quest progress reflects real exploration steps, not just a click', () => {
+  // ranger needs 4 echoes; progress must count up as you investigate
+  assert.deepEqual(questProgress('ranger', { status: 'active', powered: false, echoCount: 0, ending: null }), { current: 0, goal: 4 });
+  assert.deepEqual(questProgress('ranger', { status: 'active', powered: false, echoCount: 2, ending: null }), { current: 2, goal: 4 });
+  assert.deepEqual(questProgress('ranger', { status: 'active', powered: false, echoCount: 9, ending: null }), { current: 4, goal: 4 });
+  // signal is 4 echoes + 1 ending = 5 steps; both parts required
+  assert.deepEqual(questProgress('signal', { status: 'active', powered: true, echoCount: 4, ending: null }), { current: 4, goal: 5 });
+  assert.deepEqual(questProgress('signal', { status: 'active', powered: true, echoCount: 4, ending: 'human' }), { current: 5, goal: 5 });
+  // warden is a single power-on step
+  assert.deepEqual(questProgress('warden', { status: 'active', powered: false, echoCount: 0, ending: null }), { current: 0, goal: 1 });
+  assert.deepEqual(questProgress('warden', { status: 'active', powered: true, echoCount: 0, ending: null }), { current: 1, goal: 1 });
+});
+test('exp accumulates into levels so rewards feel earned', () => {
+  assert.equal(levelFromExp(0).level, 1);
+  assert.equal(levelFromExp(299).level, 1);
+  assert.equal(levelFromExp(300).level, 2);
+  assert.equal(levelFromExp(660).level, 3);
+  assert.ok(levelFromExp(150).ratio > 0 && levelFromExp(150).ratio < 1);
 });

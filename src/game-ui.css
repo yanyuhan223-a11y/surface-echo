@@ -152,6 +152,41 @@
 .echo-npc-actions .echo-primary{background:color-mix(in srgb,var(--npc) 26%,rgba(8,24,28,.9));border-color:color-mix(in srgb,var(--npc) 60%,transparent)}
 .echo-npc-actions .echo-primary:hover{background:color-mix(in srgb,var(--npc) 40%,rgba(8,24,28,.9));box-shadow:0 0 22px color-mix(in srgb,var(--npc) 40%,transparent)}
 
+/* ---- quest progress ---- */
+.echo-quest-count{margin-left:auto;font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--echo-cyan);font-family:"SFMono-Regular",Consolas,monospace}
+.echo-quest-num{margin-left:8px;font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--echo-amber);font-family:"SFMono-Regular",Consolas,monospace}
+.echo-quest.is-ready .echo-quest-num{color:#8effc0}
+.echo-quest-bar{display:block;margin-top:6px;height:4px;border-radius:3px;background:rgba(120,150,150,.2);overflow:hidden}
+.echo-quest-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--echo-amber),#f0d8a8);box-shadow:0 0 8px color-mix(in srgb,var(--echo-amber) 60%,transparent);transition:width .5s cubic-bezier(.16,.8,.3,1)}
+.echo-quest.is-ready .echo-quest-bar i{background:linear-gradient(90deg,#5cd68e,#8effc0);box-shadow:0 0 10px rgba(120,255,180,.5)}
+
+/* ---- reward settlement ---- */
+.echo-reward-layer{align-items:center;justify-content:center}
+.echo-reward{--npc:#8edee2;position:relative;width:min(420px,90vw);padding:30px 30px 26px;text-align:center;border:1px solid color-mix(in srgb,var(--npc) 50%,transparent);border-radius:20px;background:linear-gradient(160deg,rgba(9,26,30,.97),rgba(4,12,15,.95));backdrop-filter:blur(18px);box-shadow:0 30px 80px rgba(0,0,0,.66),0 0 50px color-mix(in srgb,var(--npc) 22%,transparent);overflow:hidden;animation:echo-reward-in .42s cubic-bezier(.16,.9,.3,1) both}
+.echo-reward-glow{position:absolute;left:50%;top:-30%;width:150%;height:120%;transform:translateX(-50%);background:radial-gradient(circle at 50% 30%,color-mix(in srgb,var(--npc) 28%,transparent),transparent 62%);pointer-events:none;animation:echo-reward-sweep 3.5s ease-in-out infinite}
+.echo-reward-ribbon{position:relative;display:inline-block;margin-bottom:14px;padding:5px 16px;font-size:10.5px;letter-spacing:.22em;border-radius:20px;color:#04121580;color:#0a1c1f;font-weight:700;background:linear-gradient(90deg,color-mix(in srgb,var(--npc) 85%,#fff 12%),color-mix(in srgb,var(--npc) 60%,#fff));box-shadow:0 0 22px color-mix(in srgb,var(--npc) 55%,transparent)}
+.echo-reward h2{position:relative;margin:0;font-size:24px;font-weight:600;letter-spacing:.08em;color:#f0fbfa}
+.echo-reward-from{position:relative;margin:6px 0 0;font-size:11px;letter-spacing:.14em;color:var(--npc)}
+.echo-reward-levelup{position:relative;display:inline-flex;align-items:center;gap:9px;margin-top:16px;padding:7px 15px;border-radius:12px;border:1px solid rgba(255,220,140,.5);background:rgba(60,44,14,.4);box-shadow:0 0 22px rgba(240,200,110,.25);animation:echo-levelup-pop .5s .25s cubic-bezier(.16,1.3,.4,1) both}
+.echo-reward-levelup span{font-size:10.5px;letter-spacing:.16em;color:#f2d79a}
+.echo-reward-levelup b{font-size:17px;font-weight:700;letter-spacing:.06em;color:#ffe6a6;font-family:"SFMono-Regular",Consolas,monospace}
+.echo-reward-grid{position:relative;list-style:none;display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin:20px 0 0;padding:0}
+.echo-reward-grid li{display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 6px;border:1px solid rgba(150,214,216,.18);border-radius:13px;background:rgba(8,26,30,.5)}
+.echo-reward-gain{display:inline-flex;align-items:center;gap:3px;font-size:19px;font-weight:700;letter-spacing:.02em;color:#eaf6f5;font-family:"SFMono-Regular",Consolas,monospace;animation:echo-gain-in .5s .3s both}
+.echo-reward-gain .echo-icon{width:14px;height:14px;flex:0 0 14px;opacity:.85}
+.echo-reward-grid small{font-size:9.5px;letter-spacing:.14em;color:var(--echo-muted)}
+.echo-reward-unlock{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:16px;padding:10px 14px;border:1px dashed color-mix(in srgb,var(--npc) 42%,transparent);border-radius:11px;font-size:12px;letter-spacing:.05em;color:#dcefee;background:color-mix(in srgb,var(--npc) 7%,transparent)}
+.echo-reward-unlock em{font-style:normal;color:var(--npc);font-size:11px}
+.echo-reward .echo-button{position:relative;margin-top:20px;width:100%;justify-content:center;background:color-mix(in srgb,var(--npc) 28%,rgba(8,24,28,.9));border-color:color-mix(in srgb,var(--npc) 60%,transparent)}
+.echo-reward .echo-button:hover{background:color-mix(in srgb,var(--npc) 42%,rgba(8,24,28,.9));box-shadow:0 0 26px color-mix(in srgb,var(--npc) 42%,transparent)}
+.echo-reward.is-final{border-color:rgba(255,220,140,.55);box-shadow:0 30px 90px rgba(0,0,0,.7),0 0 60px rgba(240,200,110,.3)}
+.echo-reward.is-final .echo-reward-glow{background:radial-gradient(circle at 50% 30%,rgba(240,200,110,.32),transparent 62%)}
+.echo-reward-final-copy{position:relative;margin:16px 0 0;font-size:12px;line-height:1.75;color:#d3e5e4;letter-spacing:.03em}
+@keyframes echo-reward-in{from{opacity:0;transform:translateY(24px) scale(.94)}to{opacity:1;transform:none}}
+@keyframes echo-reward-sweep{0%,100%{opacity:.7}50%{opacity:1}}
+@keyframes echo-levelup-pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+@keyframes echo-gain-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
 @media (max-width:650px){
   .echo-quests{top:auto;bottom:max(150px,calc(env(safe-area-inset-bottom) + 128px));transform:none;width:min(240px,60vw);padding:10px 12px 11px}
   .echo-quest-copy strong{font-size:11.5px}
@@ -159,4 +194,9 @@
   .echo-npc{width:94vw;margin-bottom:max(20px,env(safe-area-inset-bottom));padding:18px 18px 20px}
   .echo-npc-body{max-height:40vh}
   .echo-npc-body p{font-size:13px}
+  .echo-reward{width:92vw;padding:24px 20px 22px}
+  .echo-reward h2{font-size:21px}
+  .echo-reward-grid{gap:8px}
+  .echo-reward-grid li{padding:11px 4px}
+  .echo-reward-gain{font-size:16px}
 }
