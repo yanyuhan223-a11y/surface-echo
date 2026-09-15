@@ -13,6 +13,8 @@ import { investigations, nearestTarget, constrainMovement, floorHeight } from '.
 import type { Direction, GameMode, RecordData } from './logic';
 import { createNpcs } from './npcs';
 import type { NpcVisual } from './npcs';
+import { loadAshscape } from './ashscape';
+import type { AshscapeHandle } from './ashscape';
 import { npcQuests, nearestNpc, resolveQuestStatus, questReadyToTurnIn, questProgress, levelFromExp } from './quests';
 import type { NpcQuest, QuestStatus, DialogueLine } from './quests';
 import type { DialogueView, QuestView, PlayerProgress, RewardView } from '../contracts';
@@ -59,6 +61,7 @@ export class HallWorld {
   private abort = new AbortController();
   private inspected = new Set<string>();
   private npcVisuals: (NpcVisual & { draw: (g: string, c: string) => void })[] = [];
+  private ashscape: AshscapeHandle | null = null;
   private questStatus = new Map<string, QuestStatus>();
   private activeNpcId: string | null = null;
   private disposed = false;
@@ -163,6 +166,13 @@ export class HallWorld {
       await applyHallMaterials(gltf.scene, this.renderer);
       if (this.disposed) return;
       this.scene.add(gltf.scene); this.state.progress = 93; this.emit();
+      // Dress the surrounding wasteland from the imported "灰烬探索大厅与撤离场景" pack.
+      try {
+        this.ashscape = await loadAshscape(import.meta.env.BASE_URL);
+        if (this.disposed) return;
+        this.scene.add(this.ashscape.group);
+      } catch (err) { console.warn('ashscape environment skipped:', err); }
+      this.state.progress = 96; this.emit();
       await this.renderer.compileAsync(this.scene, this.camera);
       if (this.disposed) return;
       this.renderer.shadowMap.needsUpdate = true;
@@ -428,7 +438,7 @@ export class HallWorld {
     const rayDirection = desiredCamera.clone().sub(focus), rayLength = rayDirection.length();
     this.cameraRay.set(focus, rayDirection.normalize()); this.cameraRay.far = rayLength;
     const obstruction = this.cameraRay.intersectObjects(this.scene.children, true).find(hit => {
-      let object: THREE.Object3D | null = hit.object; while (object) { if (object === this.character || object.userData.npc) return false; object = object.parent; }
+      let object: THREE.Object3D | null = hit.object; while (object) { if (object === this.character || object.userData.npc || object.userData.ashscape) return false; object = object.parent; }
       return hit.distance > .65 && !(hit.object instanceof THREE.Points) && !(hit.object instanceof THREE.Sprite);
     });
     if (obstruction) desiredCamera = focus.clone().addScaledVector(rayDirection, Math.max(.85, obstruction.distance - .35));
@@ -464,6 +474,7 @@ export class HallWorld {
       this.camera.lookAt(0, 4.2, 0);
     } else if (this.state.mode === 'play' && !this.state.activeRecord && !this.state.storyOpen) this.updatePlayer(dt);
     this.dust.update(this.time); this.shafts(this.time); this.film.uniforms.time.value = milliseconds * .001;
+    this.ashscape?.update(this.time);
     for (const [id, marker] of Object.entries(this.props.markers)) {
       marker.lookAt(this.camera.position); marker.position.y = 2.12 + Math.sin(this.time * 1.5) * .045;
       marker.visible = this.state.mode === 'play' && !this.state.activeRecord && this.viewMode === 'floor' && (!this.inspected.has(id) || id === 'core') && !(id === 'core' && this.state.activated);
