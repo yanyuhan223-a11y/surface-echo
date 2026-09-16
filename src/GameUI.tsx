@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { GameUIProps, MoveDirection } from './contracts';
 import './game-ui.css';
@@ -141,7 +141,18 @@ export function GameUI(props: GameUIProps) {
     onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction, onCloseReward,
     onDeploy, onFire, onReload, onExtract } = props;
   const dialog = useRef<HTMLDivElement>(null);
+  /**
+   * 任务日志默认折叠：小屏 / 触屏上展开的列表会盖住角色，
+   * 只留一枚 "任务 0/3" 的胶囊，点开才展开完整列表。
+   */
+  const [questsOpen, setQuestsOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const coarse = window.matchMedia?.('(pointer:coarse)').matches;
+    return !coarse && window.innerWidth >= 1180;
+  });
   const isDialog = Boolean(activeRecord) || mode === 'paused';
+  /** 折叠状态下仍要提示"有奖励能领"，否则玩家会漏掉结算 */
+  const readyQuest = quests.find(q => q.status === 'ready') ?? null;
   /** the surface run has resolved: the settlement card should be the only thing left */
   const runOver = zone === 'surface' && !!surface && surface.outcome !== 'alive';
   const isExploring = mode === 'play' && !activeRecord && !storyOpen && !overlooking && !dialogue;
@@ -163,6 +174,16 @@ export function GameUI(props: GameUIProps) {
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('keydown', onKey); previous?.focus(); };
   }, [isDialog]);
+
+  // J 键快速折叠 / 展开任务日志
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === 'j' || event.key === 'J') setQuestsOpen(v => !v);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const interactPress = () => { if (onInteractionHold) onInteractionHold(true); };
   const interactRelease = () => { if (onInteractionHold) onInteractionHold(false); };
@@ -241,8 +262,13 @@ export function GameUI(props: GameUIProps) {
           <b>降至灰烬地表</b><small>DEPLOY TO SURFACE · 传送环已蓄能</small>
         </button>}
       </aside>
-      {mode === 'play' && !dialogue && quests.length > 0 && <aside className="echo-quests" aria-label="任务追踪">
-        <div className="echo-section-label"><span>任务日志</span><i/><b className="echo-quest-count">{progressStats.questsDone} / {progressStats.questsTotal}</b></div>
+      {mode === 'play' && !dialogue && quests.length > 0 && <aside className={`echo-quests ${questsOpen ? 'is-open' : 'is-closed'}`} aria-label="任务追踪">
+        <button type="button" className="echo-quests-toggle" onClick={() => setQuestsOpen(v => !v)}
+          aria-expanded={questsOpen} title={questsOpen ? '收起任务日志' : '展开任务日志'}>
+          <div className="echo-section-label"><span>任务日志</span><i/><b className="echo-quest-count">{progressStats.questsDone} / {progressStats.questsTotal}</b></div>
+          <span className="echo-quests-caret" aria-hidden="true"/>
+        </button>
+        {!questsOpen && readyQuest && <em className="echo-quests-tip">{readyQuest.npcName} 处可领奖励</em>}
         <ul>{quests.map(q => {
           const showBar = q.status === 'active' || q.status === 'ready';
           return <li key={q.id} className={`echo-quest is-${q.status}`}>
@@ -256,7 +282,7 @@ export function GameUI(props: GameUIProps) {
           </li>;
         })}</ul>
       </aside>}
-      {mode === 'tour' || overlooking ? <div className="echo-tour-control"><span>{overlooking ? '高位观察中' : '镜头漫游中'}</span><button className="echo-button echo-secondary" onClick={overlooking ? onToggleView : onStart}>{overlooking ? '返回地面' : '开始探索'}<Icon name="arrow"/></button></div> : <div className="echo-controls"><span><kbd>W A S D</kbd> 移动角色</span><i/><span><kbd>Shift</kbd> 奔跑</span><i/><span>拖动镜头</span><i/><span><kbd>E</kbd> 执行任务</span></div>}
+      {mode === 'tour' || overlooking ? <div className="echo-tour-control"><span>{overlooking ? '高位观察中' : '镜头漫游中'}</span><button className="echo-button echo-secondary" onClick={overlooking ? onToggleView : onStart}>{overlooking ? '返回地面' : '开始探索'}<Icon name="arrow"/></button></div> : <div className="echo-controls"><span><kbd>W A S D</kbd> 移动角色</span><i/><span><kbd>Shift</kbd> 奔跑</span><i/><span>拖动镜头</span><i/><span><kbd>E</kbd> 执行任务</span><i/><span><kbd>J</kbd> 任务日志</span></div>}
       <div className="echo-signal"><Icon name="signal"/><span>{activated ? '本地链路已接通' : '外部通讯中断'}</span></div>
     </>}
 

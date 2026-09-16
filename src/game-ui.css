@@ -111,7 +111,19 @@
 }
 
 /* ===== NPC quest tracker (left, under objective) ===== */
-.echo-quests{position:absolute;left:var(--echo-edge);top:calc(50% + 30px);transform:translateY(-50%);width:min(280px,42vw);z-index:12;background:linear-gradient(150deg,rgba(6,20,24,.72),rgba(4,12,15,.5));border:1px solid var(--echo-line);border-radius:14px;padding:13px 15px 14px;backdrop-filter:blur(9px);pointer-events:auto}
+.echo-quests{position:absolute;left:var(--echo-edge);top:calc(50% + 30px);transform:translateY(-50%);width:min(280px,42vw);z-index:12;background:linear-gradient(150deg,rgba(6,20,24,.72),rgba(4,12,15,.5));border:1px solid var(--echo-line);border-radius:14px;padding:13px 15px 14px;backdrop-filter:blur(9px);pointer-events:auto;transition:width .25s ease,padding .25s ease,background .25s ease}
+.echo-quests-toggle{display:flex!important;align-items:center;gap:10px;width:100%;padding:0!important;text-align:left}
+.echo-quests-toggle>.echo-section-label{flex:1;min-width:0}
+.echo-quests-caret{flex:0 0 8px;width:8px;height:8px;border-right:1px solid #9fc3c4;border-bottom:1px solid #9fc3c4;transform:rotate(45deg);margin-bottom:3px;opacity:.72;transition:transform .25s ease,opacity .2s}
+.echo-quests-toggle:hover .echo-quests-caret{opacity:1;border-color:var(--echo-cyan)}
+.echo-quests.is-open>.echo-quests-toggle{margin-bottom:9px}
+.echo-quests.is-open .echo-quests-caret{transform:rotate(225deg);margin-bottom:0;margin-top:3px}
+/* 折叠态：只留一枚窄胶囊，绝不遮挡角色与场景 */
+.echo-quests.is-closed{width:auto;padding:9px 13px;border-radius:999px;background:linear-gradient(120deg,rgba(6,20,24,.66),rgba(4,12,15,.4))}
+.echo-quests.is-closed ul{display:none}
+.echo-quests.is-closed .echo-section-label i{width:22px}
+.echo-quests-tip{display:block;margin-top:6px;font-size:9px;font-style:normal;letter-spacing:.08em;color:#8effc0;white-space:nowrap}
+.echo-quests.is-closed:has(.echo-quests-tip){border-radius:14px}
 .echo-quests>.echo-section-label{margin-bottom:9px}
 .echo-quests ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
 .echo-quest{display:flex;align-items:flex-start;gap:9px;padding:7px 8px;border:1px solid rgba(150,214,216,.14);border-radius:9px;background:rgba(8,26,30,.4);transition:border-color .25s,background .25s,opacity .25s}
@@ -501,4 +513,48 @@
 .echo-zone-surface .echo-toast { z-index: 8; }
 @media (max-width: 820px) {
   .echo-zone-surface .echo-toast { top: 92px; max-width: min(72vw, 300px); }
+}
+
+/* ============================================================
+   任务日志防遮挡：平板 / 触屏 / 窄窗口一律贴在左上角，
+   折叠成胶囊，展开时也限高可滚，不再压住角色和传送环。
+   ============================================================ */
+@media (max-width: 1180px), (pointer: coarse) {
+  .echo-quests {
+    top: auto !important;
+    bottom: auto !important;
+    left: var(--echo-edge);
+    transform: none !important;
+    width: auto;
+    max-width: min(260px, 56vw);
+  }
+  /* 停在"当前目标"面板下面：目标面板在触屏下是 top:144px 起 */
+  .echo-quests { top: max(268px, calc(env(safe-area-inset-top) + 248px)) !important; }
+  .echo-quests.is-open { width: min(260px, 56vw); }
+  .echo-quests.is-open ul {
+    max-height: min(38vh, 300px);
+    overflow-y: auto;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: #476064 transparent;
+  }
+  .echo-quests.is-closed { max-width: none; }
+  .echo-quests-toggle { min-height: 20px; }
+  .echo-quest-copy strong { font-size: 11.5px; }
+  .echo-quest-copy small { font-size: 9.5px; }
+}
+
+/* 手机竖屏：胶囊再压扁一点，避免和目标面板挤到一起 */
+@media (max-width: 650px) {
+  .echo-quests { top: max(232px, calc(env(safe-area-inset-top) + 212px)) !important; max-width: min(228px, 62vw); }
+  .echo-quests.is-open { width: min(228px, 62vw); }
+  .echo-quests.is-open ul { max-height: min(32vh, 240px); }
+  .echo-quests.is-closed { padding: 7px 11px; }
+  .echo-quests.is-closed .echo-section-label { font-size: 8.5px; }
+}
+
+/* 触屏下点击目标更大一些，手指好按 */
+@media (pointer: coarse) {
+  .echo-quests-toggle { padding: 3px 0 !important; }
+  .echo-quests-caret { width: 9px; height: 9px; }
 }
