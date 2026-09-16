@@ -546,11 +546,14 @@
 
 /* 手机竖屏：胶囊再压扁一点，避免和目标面板挤到一起 */
 @media (max-width: 650px) {
-  .echo-quests { top: max(232px, calc(env(safe-area-inset-top) + 212px)) !important; max-width: min(228px, 62vw); }
-  .echo-quests.is-open { width: min(228px, 62vw); }
-  .echo-quests.is-open ul { max-height: min(32vh, 240px); }
+  .echo-quests { top: max(232px, calc(env(safe-area-inset-top) + 212px)) !important; max-width: min(206px, 52vw); }
+  .echo-quests.is-open { width: min(206px, 52vw); }
+  .echo-quests.is-open ul { max-height: min(26vh, 190px); gap: 7px; }
+  .echo-quests.is-open .echo-quest { padding: 6px 7px; }
   .echo-quests.is-closed { padding: 7px 11px; }
   .echo-quests.is-closed .echo-section-label { font-size: 8.5px; }
+  .echo-quest-copy strong { font-size: 11px; }
+  .echo-quest-copy small { font-size: 9px; }
 }
 
 /* 触屏下点击目标更大一些，手指好按 */
