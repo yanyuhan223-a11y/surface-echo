@@ -38,12 +38,112 @@ function MoveKey({ direction, label, onMove }: { direction: MoveDirection; label
   </button>;
 }
 
+/**
+ * 地表 HUD · the surface recon overlay: hazard banner, environment + bio telemetry,
+ * terrain radar, weapon status and the extraction prompt.
+ */
+function SurfaceHud({ s, onFire, onReload, onExtract }: {
+  s: NonNullable<GameUIProps['surface']>;
+  onFire: () => void; onReload: () => void; onExtract: () => void;
+}) {
+  const hpPct = Math.max(0, Math.min(100, s.hp / s.maxHp * 100));
+  const apPct = Math.max(0, Math.min(100, s.armor / s.maxArmor * 100));
+  const danger = s.beastsAlive > 0;
+  const over = s.outcome !== 'alive';
+  return <div className={`echo-surface ${danger ? 'is-danger' : 'is-clear'}${over ? ' is-over' : ''}`}>
+    <div className="echo-sf-vignette" style={{ opacity: .28 + s.hurt * .5 }}/>
+    {s.hurt > .02 && <div className="echo-sf-hit" style={{ opacity: Math.min(.62, s.hurt * .62) }}/>}
+
+    <div className="echo-sf-banner">
+      <span className="echo-sf-warn">{danger ? '⚠︎ WARNING' : '✓︎ AREA CLEAR'}</span>
+      <span className="echo-sf-zone">灰烬地表 · ASH SURFACE</span>
+      <span className="echo-sf-state">{danger ? `DANGER · 猎行怪 ×${s.beastsAlive}` : '撤离信标已激活'}</span>
+    </div>
+
+    <div className="echo-sf-left">
+      <section className="echo-sf-panel">
+        <h4>EXTERNAL CONDITIONS</h4>
+        <ul>
+          <li><span>TEMP</span><b>{s.temp.toFixed(1)}°C</b></li>
+          <li><span>HUM</span><b>{s.humidity.toFixed(0)}%</b></li>
+          <li><span>PRES</span><b>{s.pressure.toFixed(2)} atm</b></li>
+          <li><span>WIND</span><b>{s.wind.toFixed(1)} m/s</b></li>
+        </ul>
+      </section>
+      <section className="echo-sf-panel">
+        <h4>BIO-SIGN MONITOR</h4>
+        <ul>
+          <li><span>HR</span><b className={s.heartRate > 150 ? 'hot' : ''}>{s.heartRate} bpm</b></li>
+          <li><span>SpO₂</span><b>{s.spo2}%</b></li>
+          <li><span>STRESS</span><b className={s.stress > 80 ? 'hot' : ''}>{s.stress}%</b></li>
+          <li><span>ELEV</span><b>{s.elevation} M</b></li>
+        </ul>
+      </section>
+    </div>
+
+    <div className="echo-sf-right">
+      <section className="echo-sf-radar">
+        <h4><span>TERRAIN SCAN</span><small>FOG {s.fogDensity.toFixed(0)}%</small></h4>
+        <div className="echo-sf-scope">
+          <i className="echo-sf-sweep"/>
+          <i className="echo-sf-self"/>
+          {s.blips.map((b, i) => <i key={i} className={`echo-sf-blip is-${b.kind}`}
+            style={{ left: `${50 + b.x * 46}%`, top: `${50 + b.y * 46}%` }}/>)}
+        </div>
+        <p>撤离信标 {s.beaconDistance}m</p>
+      </section>
+    </div>
+
+    <div className="echo-sf-crosshair" aria-hidden="true"><i/><i/><i/><i/></div>
+
+    <div className="echo-sf-bottom">
+      <div className="echo-sf-vitals">
+        <label>护甲值 ARMOR<b>{s.armor}</b></label>
+        <span className="echo-sf-bar is-armor"><i style={{ width: `${apPct}%` }}/></span>
+        <label>生命值 VITALS<b>{s.hp}</b></label>
+        <span className="echo-sf-bar is-hp"><i style={{ width: `${hpPct}%` }}/></span>
+      </div>
+      <div className="echo-sf-weapon">
+        <h4>WEAPON STATUS<small>电磁步枪 RAILGUN</small></h4>
+        <p className="echo-sf-ammo"><b>{s.mag}</b><span>/ {s.reserve}</span></p>
+        <p className="echo-sf-safety">{s.reloading ? 'RELOADING…' : s.mag > 0 ? 'PRIMED · SAFETY OFF' : 'MAG EMPTY · 按 R 换弹'}</p>
+      </div>
+    </div>
+
+    <div className="echo-sf-keys">
+      <span><kbd>W A S D</kbd> 移动</span><i/><span>拖动镜头瞄准</span><i/>
+      <span><kbd>空格</kbd> 开火</span><i/><span><kbd>R</kbd> 换弹</span><i/><span><kbd>E</kbd> 撤离</span>
+    </div>
+
+    <div className="echo-sf-controls">
+      <button type="button" className="echo-sf-fire" onClick={onFire} disabled={s.outcome !== 'alive'}>开火<small>SPACE / 点击</small></button>
+      <button type="button" className="echo-sf-reload" onClick={onReload} disabled={s.outcome !== 'alive'}>换弹<small>R</small></button>
+    </div>
+
+
+    {s.outcome !== 'alive' && <div className="echo-sf-end">
+      <div className={`echo-sf-endcard is-${s.outcome}`}>
+        <span>{s.outcome === 'extracted' ? 'EXTRACTION COMPLETE' : 'LIFE SIGNS CRITICAL'}</span>
+        <h3>{s.outcome === 'extracted' ? '撤离成功' : '重伤 · 强制撤回'}</h3>
+        <p>{s.outcome === 'extracted'
+          ? '你清除了地表的猎行怪，带着回声回到灯塔。'
+          : '生命维持系统接管了控制权，你被拉回了传送大厅。'}</p>
+        <button type="button" onClick={onExtract}>返回传送大厅</button>
+      </div>
+    </div>}
+  </div>;
+}
+
 export function GameUI(props: GameUIProps) {
   const { mode, ready, progress, objective, investigated, target, activeRecord, toast, muted,
-    cinematic, overlooking, activation, activated, storyOpen, dialogue, quests, progressStats, reward, onStart, onTour, onPause, onResume, onToggleMute,
-    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction, onCloseReward } = props;
+    cinematic, overlooking, activation, activated, storyOpen, dialogue, quests, progressStats, reward,
+    zone, surface, canDeploy, onStart, onTour, onPause, onResume, onToggleMute,
+    onToggleView, onCloseRecord, onInteract, onRestart, onMove, onInteractionHold, onCloseStory, onChooseStory, onDialogueAction, onCloseReward,
+    onDeploy, onFire, onReload, onExtract } = props;
   const dialog = useRef<HTMLDivElement>(null);
   const isDialog = Boolean(activeRecord) || mode === 'paused';
+  /** the surface run has resolved: the settlement card should be the only thing left */
+  const runOver = zone === 'surface' && !!surface && surface.outcome !== 'alive';
   const isExploring = mode === 'play' && !activeRecord && !storyOpen && !overlooking && !dialogue;
   const amount = Math.max(0, Math.min(1, activation));
   const loaded = Math.round(Math.max(0, Math.min(100, progress)));
@@ -67,11 +167,15 @@ export function GameUI(props: GameUIProps) {
   const interactPress = () => { if (onInteractionHold) onInteractionHold(true); };
   const interactRelease = () => { if (onInteractionHold) onInteractionHold(false); };
 
-  return <div className={`echo-ui echo-mode-${mode} ${cinematic ? 'echo-cinematic' : ''}`}>
+  return <div className={`echo-ui echo-mode-${mode} echo-zone-${zone} ${runOver ? 'echo-run-over' : ''} ${cinematic ? 'echo-cinematic' : ''}`}>
+    {zone === 'surface' && surface && mode === 'play' && !reward && !dialogue && !activeRecord &&
+      <SurfaceHud s={surface} onFire={onFire} onReload={onReload} onExtract={onExtract}/>}
     <div className="echo-filmbar echo-filmbar-top"/><div className="echo-filmbar echo-filmbar-bottom"/>
     <header className="echo-header">
       <div className="echo-brand"><Mark/><span>地表回声<small>SURFACE ECHO</small></span></div>
-      <div className="echo-location"><span>灯塔 <i/> 传送大厅</span><small>DECK 04 <span className="echo-coordinate">／ TRANSIT CHAMBER</span></small></div>
+      <div className="echo-location">{zone === 'surface'
+      ? <><span>灰烬地表 <i/> 撤离区</span><small>SECTOR 07 <span className="echo-coordinate">／ ASH SURFACE</span></small></>
+      : <><span>灯塔 <i/> 传送大厅</span><small>DECK 04 <span className="echo-coordinate">／ TRANSIT CHAMBER</span></small></>}</div>
       <nav className="echo-actions" aria-label="游戏设置">
         <button onClick={onToggleMute} aria-label={muted ? '开启音效' : '关闭音效'} aria-pressed={!muted} title={muted ? '开启音效' : '关闭音效'}><Icon name={muted ? 'muted' : 'sound'}/><span>{muted ? '静音' : '音效'}</span></button>
         <button onClick={onToggleView} aria-label={mode === 'play' ? overlooking ? '返回地面探索' : '高位俯瞰大厅' : cinematic ? '隐藏电影黑边' : '显示电影黑边'} aria-pressed={mode === 'play' ? overlooking : cinematic} title={mode === 'play' ? '地面探索 / 高位俯瞰 · V' : '切换电影黑边'}><Icon name="view"/><span>{overlooking ? '返回地面' : '视角'}</span></button>
@@ -133,6 +237,9 @@ export function GameUI(props: GameUIProps) {
     {(mode === 'play' || mode === 'tour') && <>
       <aside className="echo-objective" aria-label="当前探索目标"><div className="echo-section-label"><span>{mode === 'tour' ? '观察模式' : '当前目标'}</span><i/></div><p>{mode === 'tour' ? '沿着光，重新发现这座大厅' : objective}</p>
         <div className="echo-intel"><span>回声碎片</span><span className="echo-intel-dots" aria-label={`已调查 ${Math.min(6, investigated)} / 6 处`}>{[0, 1, 2, 3, 4, 5].map(index => <i key={index} className={index < investigated ? 'is-found' : ''}/>)}</span><span className="echo-mono">{Math.min(6, investigated).toString().padStart(2, '0')} / 06</span></div>
+        {zone === 'hall' && canDeploy && <button type="button" className="echo-deploy" onClick={onDeploy}>
+          <b>降至灰烬地表</b><small>DEPLOY TO SURFACE · 传送环已蓄能</small>
+        </button>}
       </aside>
       {mode === 'play' && !dialogue && quests.length > 0 && <aside className="echo-quests" aria-label="任务追踪">
         <div className="echo-section-label"><span>任务日志</span><i/><b className="echo-quest-count">{progressStats.questsDone} / {progressStats.questsTotal}</b></div>

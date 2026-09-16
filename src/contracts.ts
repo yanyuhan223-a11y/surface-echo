@@ -1,5 +1,7 @@
 export type GameMode = 'intro' | 'play' | 'tour' | 'paused';
 export type MoveDirection = 'forward' | 'backward' | 'left' | 'right';
+/** Which level the player is in. */
+export type Zone = 'hall' | 'surface';
 
 export interface InvestigationTarget {
   id: string;
@@ -71,8 +73,45 @@ export interface RewardView {
   allDone: boolean;
 }
 
+/** Live readouts for the surface (地表) combat HUD, styled after the recon overlay. */
+export interface SurfaceView {
+  /** health / armour */
+  hp: number; maxHp: number;
+  armor: number; maxArmor: number;
+  /** weapon */
+  mag: number; magSize: number; reserve: number;
+  reloading: boolean;
+  /** mission */
+  beastsAlive: number;
+  beastsTotal: number;
+  /** true once every beast is down and the pad is hot */
+  extractionOpen: boolean;
+  /** player is standing on the extraction pad */
+  onPad: boolean;
+  /** metres to the extraction beacon */
+  beaconDistance: number;
+  /** environment telemetry */
+  temp: number;
+  humidity: number;
+  pressure: number;
+  wind: number;
+  elevation: number;
+  fogDensity: number;
+  /** bio-sign monitor */
+  heartRate: number;
+  spo2: number;
+  stress: number;
+  /** flashes the damage vignette */
+  hurt: number;
+  /** run outcome */
+  outcome: 'alive' | 'down' | 'extracted';
+  /** radar blips, relative to the player, already rotated into view space (-1..1) */
+  blips: { x: number; y: number; kind: 'beast' | 'beacon' }[];
+}
+
 export interface GameUIProps {
   mode: GameMode;
+  zone: Zone;
   ready: boolean;
   progress: number;
   objective: string;
@@ -92,6 +131,10 @@ export interface GameUIProps {
   quests: QuestView[];
   progressStats: PlayerProgress;
   reward: RewardView | null;
+  /** present only while zone === 'surface' */
+  surface: SurfaceView | null;
+  /** true when the hall teleport pad is charged and can drop the player to the surface */
+  canDeploy: boolean;
   onStart: () => void;
   onTour: () => void;
   onPause: () => void;
@@ -108,4 +151,12 @@ export interface GameUIProps {
   onChooseStory: (ending: 'human' | 'mimic' | 'future') => void;
   onDialogueAction: (action: 'accept' | 'turnin' | 'close') => void;
   onCloseReward: () => void;
+  /** drop from the hall teleport pad down to the ash surface */
+  onDeploy: () => void;
+  /** fire the railgun (surface only) */
+  onFire: () => void;
+  /** reload the railgun (surface only) */
+  onReload: () => void;
+  /** leave the surface — extraction success, or retreat after going down */
+  onExtract: () => void;
 }

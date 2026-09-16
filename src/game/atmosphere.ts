@@ -9,7 +9,7 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
   const env = pmrem.fromScene(room, .04);
   scene.environment = env.texture; scene.environmentIntensity = .3;
   room.dispose(); pmrem.dispose();
-  scene.add(new THREE.HemisphereLight('#91c4d2', '#192225', .46));
+  const hemi = new THREE.HemisphereLight('#91c4d2', '#192225', .46); scene.add(hemi);
   RectAreaLightUniformsLib.init();
   const ceiling = new THREE.RectAreaLight('#a1ecf7', 2.6, 20, 20);
   ceiling.position.set(0, 11.2, 0); ceiling.lookAt(0, 0, 0); scene.add(ceiling);
@@ -32,7 +32,9 @@ export function setupLighting(scene: THREE.Scene, renderer: THREE.WebGLRenderer)
     wall.position.set(Math.cos(a + .3) * 19.6, 2.4, Math.sin(a + .3) * 19.6); scene.add(wall); wallLights.push(wall);
   }
   const core = new THREE.PointLight('#6effff', 90, 20, 1.6); core.position.set(0, 2.4, 0); scene.add(core);
-  return { ringLights, wallLights, core, spots, dispose: () => env.dispose() };
+  /** every hall light, so the world can switch them off when the player leaves the hall */
+  const all: THREE.Light[] = [hemi, ceiling, fill, ...spots, ...ringLights, ...wallLights, core];
+  return { ringLights, wallLights, core, spots, all, dispose: () => env.dispose() };
 }
 
 export async function applyHallMaterials(model: THREE.Object3D, renderer: THREE.WebGLRenderer) {
@@ -64,7 +66,7 @@ export async function applyHallMaterials(model: THREE.Object3D, renderer: THREE.
   });
 }
 
-export function createDust(scene: THREE.Scene, mobile: boolean) {
+export function createDust(scene: THREE.Object3D, mobile: boolean) {
   const count = mobile ? 450 : 1250, positions = new Float32Array(count * 3), sizes = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 21;
@@ -83,7 +85,7 @@ export function createDust(scene: THREE.Scene, mobile: boolean) {
   return { update: (t: number) => { material.uniforms.time.value = t; }, dispose: () => { geometry.dispose(); material.dispose(); } };
 }
 
-export function createLightShafts(scene: THREE.Scene) {
+export function createLightShafts(scene: THREE.Object3D) {
   const material = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
     uniforms: { time: { value: 0 } },

@@ -13,11 +13,17 @@ import { investigations, nearestTarget, constrainMovement, floorHeight } from '.
 import type { Direction, GameMode, RecordData } from './logic';
 import { createNpcs } from './npcs';
 import type { NpcVisual } from './npcs';
-import { loadAshscape } from './ashscape';
-import type { AshscapeHandle } from './ashscape';
+import { loadSurface, SURFACE_Y } from './surface';
+import type { SurfaceHandle } from './surface';
+import {
+  createBeasts, createVitals, createWeapon, stepBeast, applyDamage, tickWeapon,
+  canFire, startReload, hitscan, damageBeast, beastsAlive, atExtraction, constrainSurface,
+  aimVector,
+} from './combat';
+import type { Beast, Weapon, Vitals } from './combat';
 import { npcQuests, nearestNpc, resolveQuestStatus, questReadyToTurnIn, questProgress, levelFromExp } from './quests';
 import type { NpcQuest, QuestStatus, DialogueLine } from './quests';
-import type { DialogueView, QuestView, PlayerProgress, RewardView } from '../contracts';
+import type { DialogueView, QuestView, PlayerProgress, RewardView, SurfaceView, Zone } from '../contracts';
 
 export interface WorldState {
   mode: GameMode; ready: boolean; progress: number; objective: string; investigated: number;
@@ -29,6 +35,12 @@ export interface WorldState {
   /** cumulative exp granted by quests */
   exp: number; echo: number; energy: number;
   progressStats: PlayerProgress; reward: RewardView | null;
+  /** which level the player is standing in */
+  zone: Zone;
+  /** combat readouts, only while zone === 'surface' */
+  surface: SurfaceView | null;
+  /** hall teleport pad is charged, so the surface drop is available */
+  canDeploy: boolean;
 }
 const BASE_ECHO = 40, BASE_ENERGY = 20;
 export const initialState: WorldState = {
@@ -38,6 +50,7 @@ export const initialState: WorldState = {
   exp: 0, echo: BASE_ECHO, energy: BASE_ENERGY,
   progressStats: { level: 1, levelInto: 0, levelSpan: 300, echo: BASE_ECHO, energy: BASE_ENERGY, questsDone: 0, questsTotal: npcQuests.length },
   reward: null,
+  zone: 'hall', surface: null, canDeploy: false,
 };
 
 export class HallWorld {
@@ -61,7 +74,28 @@ export class HallWorld {
   private abort = new AbortController();
   private inspected = new Set<string>();
   private npcVisuals: (NpcVisual & { draw: (g: string, c: string) => void })[] = [];
-  private ashscape: AshscapeHandle | null = null;
+  /** everything that belongs to the lighthouse hall, so the whole level can be hidden */
+  private hallGroup = new THREE.Group();
+  // ---- surface zone ----
+  private surfaceHandle: SurfaceHandle | null = null;
+  private zone: Zone = 'hall';
+  private beasts: Beast[] = [];
+  private beastNodes: { node: THREE.Object3D; bar: THREE.Sprite; mat: THREE.SpriteMaterial }[] = [];
+  private weapon: Weapon = createWeapon();
+  private vitals: Vitals = createVitals();
+  private hurt = 0;
+  private outcome: 'alive' | 'down' | 'extracted' = 'alive';
+  private groundRay = new THREE.Raycaster();
+  private weaponView: THREE.Group | null = null;
+  private muzzle: THREE.PointLight | null = null;
+  private muzzleUntil = 0;
+  private tracers: { line: THREE.Line; until: number }[] = [];
+  private recoil = 0;
+  /** set on a level change so the camera jumps straight to its new pose */
+  private cameraSnap = false;
+  private sparks: { node: THREE.Mesh; until: number }[] = [];
+  /** XZ point the crosshair actually looks through (offset over the shoulder) */
+  private aimOrigin = new THREE.Vector2(0, 0);
   private questStatus = new Map<string, QuestStatus>();
   private activeNpcId: string | null = null;
   private disposed = false;
@@ -95,9 +129,10 @@ export class HallWorld {
     this.renderer.domElement.tabIndex = 0;
     container.appendChild(this.renderer.domElement);
     this.lights = setupLighting(this.scene, this.renderer);
-    this.dust = createDust(this.scene, this.mobile); this.shafts = createLightShafts(this.scene); this.props = createProps(this.scene);
+    this.scene.add(this.hallGroup);
+    this.dust = createDust(this.hallGroup, this.mobile); this.shafts = createLightShafts(this.hallGroup); this.props = createProps(this.hallGroup);
     const avatar = this.createCharacter(); this.character = avatar.group; this.characterParts = avatar.parts; this.scene.add(this.character);
-    this.npcVisuals = createNpcs(this.scene);
+    this.npcVisuals = createNpcs(this.hallGroup);
     for (const q of npcQuests) this.questStatus.set(q.id, q.id === 'warden' ? 'available' : 'available');
     this.refreshQuestViews();
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: this.mobile ? 0 : 2 });
@@ -165,13 +200,16 @@ export class HallWorld {
       this.state.progress = 76; this.emit();
       await applyHallMaterials(gltf.scene, this.renderer);
       if (this.disposed) return;
-      this.scene.add(gltf.scene); this.state.progress = 93; this.emit();
-      // Dress the surrounding wasteland from the imported "灰烬探索大厅与撤离场景" pack.
+      this.hallGroup.add(gltf.scene); this.state.progress = 93; this.emit();
+      // Second level: the ash surface & extraction site, from the imported pack.
       try {
-        this.ashscape = await loadAshscape(import.meta.env.BASE_URL);
+        this.surfaceHandle = await loadSurface(import.meta.env.BASE_URL);
         if (this.disposed) return;
-        this.scene.add(this.ashscape.group);
-      } catch (err) { console.warn('ashscape environment skipped:', err); }
+        this.surfaceHandle.group.position.y = SURFACE_Y;
+        this.scene.add(this.surfaceHandle.group);
+        this.buildBeasts();
+        this.buildWeaponView();
+      } catch (err) { console.warn('surface zone skipped:', err); }
       this.state.progress = 96; this.emit();
       await this.renderer.compileAsync(this.scene, this.camera);
       if (this.disposed) return;
@@ -185,6 +223,420 @@ export class HallWorld {
   }
 
   private emit() { this.emitCallback({ ...this.state }); }
+
+  // ==========================================================================
+  // 地表 · Surface zone: build, deploy, combat
+  // ==========================================================================
+
+  /** Spawn the live hunter beasts from the authored positions. */
+  private buildBeasts() {
+    const handle = this.surfaceHandle;
+    if (!handle) return;
+    const spawns = handle.beastSpawns.length
+      ? handle.beastSpawns
+      : [new THREE.Vector3(10, 0, -3.5), new THREE.Vector3(16, 0, 5), new THREE.Vector3(21.7, 0, 5.2)];
+    // keep them out in the open ash: the authored spots sit partly inside the deck
+    for (const v of spawns) if (v.x < 4) v.x = 6 + Math.random() * 4;
+    this.beasts = createBeasts(spawns.map(v => ({ x: v.x, z: v.z })));
+    for (const beast of this.beasts) {
+      // the authored beast GLB reads as an unlit slab in engine, so we always use
+      // the hand-built creature for the live enemies
+      const node = this.fallbackBeast();
+      node.userData.surface = true; node.userData.beast = true;
+      node.traverse(o => { o.userData.surface = true; o.userData.beast = true; });
+      node.position.set(beast.x, 0, beast.z);
+      // the authored model is roughly 1.5 units tall — too small to read as a threat
+      // next to a 2.7-unit avatar, so bulk it up.
+      const beastScale = 1.42;
+      node.scale.setScalar(beastScale);
+      node.userData.baseScale = beastScale;
+      // A small health bar floats above each beast.
+      const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 16;
+      const mat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthWrite: false });
+      const bar = new THREE.Sprite(mat);
+      bar.scale.set(1.9, .24, 1); bar.position.y = 2.45; bar.raycast = () => {};
+      bar.userData.surface = true; node.add(bar);
+      handle.group.add(node);
+      this.beastNodes.push({ node, bar, mat });
+    }
+    this.drawBeastBars();
+  }
+
+  /**
+   * The hunter beast: a hunched quadruped, roughly a head taller than Mark, with a
+   * pale carapace so it stays legible against the ash, plus hot orange eyes.
+   */
+  private fallbackBeast() {
+    const g = new THREE.Group();
+    const hide = new THREE.MeshStandardMaterial({ color: '#241d1a', roughness: .74, metalness: .12 });
+    const plate = new THREE.MeshStandardMaterial({ color: '#1a1413', roughness: .5, metalness: .34 });
+    const limb = new THREE.MeshStandardMaterial({ color: '#2c2320', roughness: .7 });
+    const ember = new THREE.MeshStandardMaterial({ color: '#320c04', emissive: '#ff5220', emissiveIntensity: 7.5, roughness: .28 });
+
+    // torso: heavy at the shoulders, tapering back
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.52, 1.5, 8, 16), hide);
+    torso.rotation.z = Math.PI / 2; torso.position.set(0, 1.42, 0);
+    torso.scale.set(1, 1, 1.18); g.add(torso);
+
+    const hump = new THREE.Mesh(new THREE.SphereGeometry(.55, 16, 12), hide);
+    hump.position.set(0, 1.72, .42); hump.scale.set(.92, .74, 1.05); g.add(hump);
+
+    // dorsal plates
+    for (let i = 0; i < 5; i++) {
+      const spine = new THREE.Mesh(new THREE.ConeGeometry(.16, .52 - i * .05, 4), plate);
+      spine.position.set(0, 1.97 - i * .04, .55 - i * .34);
+      spine.rotation.x = -.22; g.add(spine);
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(.3, .05, .1), ember);
+      vent.position.set(0, 1.78 - i * .05, .5 - i * .34); g.add(vent);
+    }
+    const throat = new THREE.PointLight('#ff4a1e', 5.5, 7, 2);
+    throat.position.set(0, 1.6, 0); g.add(throat);
+
+    // neck + skull, carried low like a stalking animal
+    const neck = new THREE.Mesh(new THREE.CapsuleGeometry(.27, .5, 6, 12), hide);
+    neck.position.set(0, 1.5, 1.0); neck.rotation.x = 1.16; g.add(neck);
+    const skull = new THREE.Mesh(new THREE.BoxGeometry(.46, .38, .78), plate);
+    skull.position.set(0, 1.24, 1.44); g.add(skull);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(.34, .16, .6), limb);
+    jaw.position.set(0, 1.03, 1.5); g.add(jaw);
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(.09, 10, 8), ember);
+      eye.position.set(side * .16, 1.33, 1.72); g.add(eye);
+      const tusk = new THREE.Mesh(new THREE.ConeGeometry(.06, .3, 5), plate);
+      tusk.position.set(side * .16, 1.06, 1.76); tusk.rotation.x = Math.PI; g.add(tusk);
+    }
+    const glow = new THREE.PointLight('#ff7a3c', 7, 6, 2);
+    glow.position.set(0, 1.3, 1.7); g.add(glow);
+
+    // four legs, front pair braced forward
+    for (const side of [-1, 1]) {
+      for (const [z, lift] of [[.72, .12], [-.66, 0]] as [number, number][]) {
+        const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(.15, .58, 6, 10), limb);
+        thigh.position.set(side * .44, 1.06 + lift, z);
+        thigh.rotation.x = z > 0 ? .3 : -.3; g.add(thigh);
+        const shin = new THREE.Mesh(new THREE.CapsuleGeometry(.11, .62, 6, 10), limb);
+        shin.position.set(side * .48, .44, z + (z > 0 ? .16 : -.14));
+        shin.rotation.x = z > 0 ? -.22 : .2; g.add(shin);
+        const paw = new THREE.Mesh(new THREE.BoxGeometry(.26, .13, .38), plate);
+        paw.position.set(side * .48, .08, z + (z > 0 ? .26 : -.22)); g.add(paw);
+      }
+    }
+
+    // tail
+    const tail = new THREE.Mesh(new THREE.CapsuleGeometry(.1, .9, 6, 10), hide);
+    tail.position.set(0, 1.34, -1.12); tail.rotation.x = 1.02; g.add(tail);
+
+    g.traverse(o => { o.castShadow = false; o.receiveShadow = false; });
+    return g;
+  }
+
+  private drawBeastBars() {
+    for (let i = 0; i < this.beasts.length; i++) {
+      const beast = this.beasts[i], entry = this.beastNodes[i];
+      if (!entry) continue;
+      const tex = entry.mat.map as THREE.CanvasTexture;
+      const canvas = tex.image as HTMLCanvasElement;
+      const c = canvas.getContext('2d')!;
+      c.clearRect(0, 0, 128, 16);
+      if (beast.state !== 'dead') {
+        c.fillStyle = 'rgba(6,10,12,.72)'; c.fillRect(0, 4, 128, 8);
+        const pct = beast.hp / beast.maxHp;
+        c.fillStyle = pct > .5 ? '#ff9a5c' : '#ff4d3d';
+        c.fillRect(1, 5, Math.max(0, 126 * pct), 6);
+        c.strokeStyle = 'rgba(255,190,150,.6)'; c.lineWidth = 1; c.strokeRect(.5, 4.5, 127, 7);
+      }
+      tex.needsUpdate = true;
+      entry.bar.visible = beast.state !== 'dead';
+    }
+  }
+
+  /** Railgun view-model carried by the avatar while on the surface. */
+  private buildWeaponView() {
+    const g = new THREE.Group();
+    const steel = new THREE.MeshStandardMaterial({ color: '#59636d', roughness: .48, metalness: .72 });
+    const glow = new THREE.MeshStandardMaterial({ color: '#0b1418', emissive: '#63e6f0', emissiveIntensity: 2.6, roughness: .3 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(.14, .17, 1.05), steel); body.position.z = .3; g.add(body);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(.05, .05, 1.25), glow); rail.position.set(0, .12, .38); g.add(rail);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(.11, .28, .13), steel); grip.position.set(0, -.19, -.02); grip.rotation.x = .22; g.add(grip);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(.1, .24, .18), steel); mag.position.set(0, -.16, .26); g.add(mag);
+    const muzzle = new THREE.PointLight('#9ff4ff', 0, 8, 1.6); muzzle.position.set(0, .06, .95); g.add(muzzle);
+    this.muzzle = muzzle;
+    g.traverse(o => { o.userData.surface = true; o.castShadow = false; });
+    // Held at the right hand, angled forward.
+    g.position.set(.54, 1.44, .42); g.rotation.set(-.06, .14, -.08);
+    g.scale.setScalar(1.45);
+    g.visible = false;
+    this.weaponView = g; this.character.add(g);
+  }
+
+  /** Ground height under a surface point, sampled off the imported terrain. */
+  private surfaceGroundY(x: number, z: number) {
+    const handle = this.surfaceHandle;
+    if (!handle || !handle.terrain.length) return 0;
+    this.groundRay.set(new THREE.Vector3(x, 40, z), new THREE.Vector3(0, -1, 0));
+    this.groundRay.far = 80;
+    const hits = this.groundRay.intersectObjects(handle.terrain, true);
+    return hits.length ? hits[0].point.y : 0;
+  }
+
+  /** Drop from the charged hall pad down to the ash surface. */
+  deploy = () => {
+    if (!this.surfaceHandle || this.zone === 'surface') return;
+    if (!this.state.activated) { this.toast('传送环尚未蓄能，先在中央控制台按住 E。'); return; }
+    const handle = this.surfaceHandle;
+    this.zone = 'surface'; this.state.zone = 'surface';
+    this.outcome = 'alive';
+    this.vitals = createVitals();
+    this.weapon = createWeapon();
+    this.beasts = [];
+    this.beastNodes.length = 0;
+    // rebuild enemies fresh on every drop
+    for (const child of [...handle.group.children]) {
+      if (child.userData.beast) handle.group.remove(child);
+    }
+    this.buildBeasts();
+    // move the player into the surface zone
+    this.player.set(handle.spawn.x, SURFACE_Y + this.surfaceGroundY(handle.spawn.x, handle.spawn.z) + .08, handle.spawn.z);
+    this.yaw = handle.spawnYaw; this.pitch = .08;
+    this.viewMode = 'floor';
+    this.hallGroup.visible = false;
+    for (const l of this.lights.all) l.visible = false;
+    handle.group.visible = true;
+    for (const l of handle.lights) l.visible = true;
+    if (this.weaponView) this.weaponView.visible = true;
+    this.scene.background = handle.sky;
+    this.scene.fog = new THREE.FogExp2('#8a7f6b', .019);
+    this.scene.environmentIntensity = .58;
+    this.bloom.strength = .2;
+    this.renderer.toneMappingExposure = .95;
+    this.cameraSnap = true;
+    this.state.objective = '击退全部猎行怪，然后抵达撤离信标';
+    this.state.target = null; this.state.dialogue = null; this.activeNpcId = null;
+    this.toast('已投放至灰烬地表', 4);
+    this.audio.tone('power');
+    this.emit();
+  };
+
+  /** Return to the hall — either after a successful extraction or after going down. */
+  extract = () => {
+    if (this.zone !== 'surface') return;
+    const handle = this.surfaceHandle;
+    this.zone = 'hall'; this.state.zone = 'hall';
+    this.hallGroup.visible = true;
+    for (const l of this.lights.all) l.visible = true;
+    if (handle) { handle.group.visible = false; for (const l of handle.lights) l.visible = false; }
+    if (this.weaponView) this.weaponView.visible = false;
+    this.scene.background = new THREE.Color('#071116');
+    this.scene.fog = new THREE.FogExp2('#112832', .020);
+    this.scene.environmentIntensity = .3;
+    this.bloom.strength = .36;
+    this.renderer.toneMappingExposure = .93;
+    this.cameraSnap = true;
+    this.player.set(0, .08, 6.4);
+    this.yaw = Math.PI; this.pitch = .12;
+    if (this.outcome === 'extracted') {
+      this.state.exp += 420; this.state.echo += 12; this.state.energy += 30;
+      this.state.reward = {
+        questTitle: '地表撤离', npcName: '撤离信标', color: '#7ef0c4',
+        exp: 420, echo: 12, energy: 30,
+        rewardTitle: '地表归返者', unlock: '灰烬地表 · 可重复投放',
+        leveledUp: levelFromExp(this.state.exp).level > levelFromExp(this.state.exp - 420).level,
+        newLevel: levelFromExp(this.state.exp).level, allDone: false,
+      };
+      this.state.objective = '地表撤离成功 · 可再次投放或继续调查';
+      this.toast('撤离成功 · 你带回了地表的回声', 5);
+    } else {
+      this.state.objective = '重伤撤回大厅 · 恢复后可再次投放';
+      this.toast('生命维持系统强制撤回', 5);
+    }
+    this.state.surface = null;
+    this.refreshProgressStats();
+    this.emit();
+  };
+
+  fire = () => {
+    if (this.zone !== 'surface' || this.outcome !== 'alive') return;
+    if (this.weapon.reloading > 0) return;
+    if (this.weapon.mag <= 0) { this.reload(); return; }
+    if (!canFire(this.weapon)) return;
+    this.weapon = { ...this.weapon, mag: this.weapon.mag - 1, fireCd: 0.42 };
+    this.recoil = 1;
+    this.muzzleUntil = this.time + .07;
+    this.audio.tone('shot');
+    // Aim straight out of the camera on the XZ plane.
+    const aim = aimVector(this.yaw);
+    const dirX = aim.x, dirZ = aim.z;
+    const origin = { x: this.aimOrigin.x, z: this.aimOrigin.y };
+    const hit = hitscan(origin, dirX, dirZ, this.beasts);
+    this.spawnTracer(dirX, dirZ, hit);
+    if (hit) {
+      const killed = damageBeast(hit);
+      this.drawBeastBars();
+      if (killed) {
+        this.state.echo += 3; this.state.exp += 60;
+        this.toast(beastsAlive(this.beasts) === 0 ? '猎行怪已全部清除 · 撤离信标已激活' : `猎行怪已击杀 · 剩余 ${beastsAlive(this.beasts)}`, 3);
+        this.refreshProgressStats();
+      }
+      this.audio.tone('scan');
+    }
+    this.emit();
+  };
+
+  reload = () => {
+    if (this.zone !== 'surface') return;
+    const next = startReload(this.weapon);
+    if (next !== this.weapon) { this.weapon = next; this.toast('换弹中…', 1.4); }
+    this.emit();
+  };
+
+  private spawnTracer(dirX: number, dirZ: number, hit: Beast | null) {
+    const handle = this.surfaceHandle;
+    if (!handle) return;
+    const localY = this.player.y - SURFACE_Y + 1.55;
+    const ox = this.aimOrigin.x, oz = this.aimOrigin.y;
+    const from = new THREE.Vector3(ox + dirX * .6, localY, oz + dirZ * .6);
+    const dist = hit ? Math.hypot(hit.x - ox, hit.z - oz) : 40;
+    const to = new THREE.Vector3(ox + dirX * dist, localY + (hit ? .1 : -.4), oz + dirZ * dist);
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: '#cdf6ff', transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    line.userData.surface = true; line.raycast = () => {};
+    handle.group.add(line);
+    this.tracers.push({ line, until: this.time + .26 });
+    // muzzle flare at the barrel
+    const flare = new THREE.Mesh(
+      new THREE.SphereGeometry(.3, 10, 8),
+      new THREE.MeshBasicMaterial({ color: '#dff6ff', transparent: true, opacity: .95, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    flare.position.copy(from);
+    flare.userData.surface = true; flare.raycast = () => {};
+    handle.group.add(flare);
+    this.sparks.push({ node: flare, until: this.time + .14 });
+    if (hit) {
+      const spark = new THREE.Mesh(
+        new THREE.SphereGeometry(.42, 10, 8),
+        new THREE.MeshBasicMaterial({ color: '#ffd9a8', transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      spark.position.set(to.x, to.y + .5, to.z);
+      spark.userData.surface = true; spark.raycast = () => {};
+      handle.group.add(spark);
+      this.sparks.push({ node: spark, until: this.time + .22 });
+    }
+  }
+
+  /** One surface frame: beasts hunt, weapon cools, extraction check. */
+  private stepSurface(dt: number) {
+    const handle = this.surfaceHandle;
+    if (!handle) return;
+    this.weapon = tickWeapon(this.weapon, dt);
+    this.hurt = Math.max(0, this.hurt - dt * 1.8);
+    this.recoil = Math.max(0, this.recoil - dt * 6);
+    if (this.muzzle) this.muzzle.intensity = this.time < this.muzzleUntil ? 26 : 0;
+    for (const s2 of [...this.sparks]) {
+      const life = Math.min(1, (s2.until - this.time) / .22);
+      if (life <= 0) {
+        handle.group.remove(s2.node);
+        s2.node.geometry.dispose(); (s2.node.material as THREE.Material).dispose();
+        this.sparks.splice(this.sparks.indexOf(s2), 1);
+      } else {
+        (s2.node.material as THREE.MeshBasicMaterial).opacity = life * .85;
+        s2.node.scale.setScalar(1 + (1 - life) * 1.7);
+      }
+    }
+    for (const t of [...this.tracers]) {
+      if (this.time >= t.until) {
+        handle.group.remove(t.line);
+        t.line.geometry.dispose(); (t.line.material as THREE.Material).dispose();
+        this.tracers.splice(this.tracers.indexOf(t), 1);
+      }
+    }
+
+    if (this.outcome === 'alive') {
+      let incoming = 0;
+      for (const beast of this.beasts) {
+        incoming += stepBeast(beast, { x: this.player.x, z: this.player.z }, dt);
+      }
+      if (incoming > 0) {
+        this.vitals = applyDamage(this.vitals, incoming);
+        this.hurt = 1;
+        this.audio.tone('hurt');
+        if (this.vitals.hp <= 0) {
+          this.outcome = 'down';
+          this.toast('生命信号临界 · 需要立即撤回', 6);
+        }
+      }
+      if (beastsAlive(this.beasts) === 0 && atExtraction({ x: this.player.x, z: this.player.z }, handle.beacon)) {
+        this.outcome = 'extracted';
+        this.toast('撤离信标同步完成', 4);
+      }
+    }
+
+    // mirror beasts onto their meshes
+    for (let i = 0; i < this.beasts.length; i++) {
+      const beast = this.beasts[i], entry = this.beastNodes[i];
+      if (!entry) continue;
+      if (beast.state === 'dead') {
+        entry.node.visible = true;
+        entry.node.rotation.z = Math.min(Math.PI / 2, entry.node.rotation.z + dt * 3.2);
+        entry.node.position.y = Math.max(-.4, entry.node.position.y - dt * .5);
+        continue;
+      }
+      const gy = this.surfaceGroundY(beast.x, beast.z);
+      entry.node.position.set(beast.x, gy, beast.z);
+      entry.node.rotation.y = beast.facing;
+      const lunge = beast.state === 'attack' ? Math.sin(this.time * 9) * .12 : Math.sin(this.time * 5 + beast.id) * .05;
+      entry.node.position.y = gy + Math.abs(lunge);
+      const base = (entry.node.userData.baseScale as number) ?? 1;
+      entry.node.scale.setScalar(base * (beast.flash > 0 ? 1.08 : 1));
+    }
+    this.drawBeastBars();
+    handle.update(this.time);
+  }
+
+  private surfaceView(): SurfaceView {
+    const handle = this.surfaceHandle;
+    const beacon = handle ? handle.beacon : new THREE.Vector3(24.5, 0, 8.5);
+    const dist = Math.hypot(this.player.x - beacon.x, this.player.z - beacon.z);
+    const alive = beastsAlive(this.beasts);
+    const stressed = this.hurt > .05 || alive > 0;
+    // Radar: rotate world offsets into view space (forward = up).
+    const sin = Math.sin(-this.yaw), cos = Math.cos(-this.yaw);
+    const blips: SurfaceView['blips'] = [];
+    const project = (wx: number, wz: number, kind: 'beast' | 'beacon') => {
+      const dx = wx - this.player.x, dz = wz - this.player.z;
+      const rx = dx * cos - dz * sin, rz = dx * sin + dz * cos;
+      const range = 34;
+      const x = Math.max(-1, Math.min(1, rx / range));
+      const y = Math.max(-1, Math.min(1, -rz / range));
+      blips.push({ x, y, kind });
+    };
+    for (const b of this.beasts) if (b.state !== 'dead') project(b.x, b.z, 'beast');
+    project(beacon.x, beacon.z, 'beacon');
+    return {
+      hp: this.vitals.hp, maxHp: this.vitals.maxHp,
+      armor: this.vitals.armor, maxArmor: this.vitals.maxArmor,
+      mag: this.weapon.mag, magSize: this.weapon.magSize, reserve: this.weapon.reserve,
+      reloading: this.weapon.reloading > 0,
+      beastsAlive: alive, beastsTotal: this.beasts.length,
+      extractionOpen: alive === 0,
+      onPad: dist <= 3.1,
+      beaconDistance: Math.round(dist),
+      temp: -23.7 + Math.sin(this.time * .07) * .6,
+      humidity: 12 + Math.sin(this.time * .11) * 2,
+      pressure: 0.71 + Math.sin(this.time * .05) * .01,
+      wind: 9.4 + Math.sin(this.time * .23) * 2.6,
+      elevation: Math.round(812 + (this.player.y - SURFACE_Y)),
+      fogDensity: 62 + Math.sin(this.time * .09) * 6,
+      heartRate: Math.round((stressed ? 168 : 96) + Math.sin(this.time * 2.4) * 9 + this.hurt * 22),
+      spo2: Math.round(97 - this.hurt * 4),
+      stress: Math.round(Math.min(99, (stressed ? 78 : 24) + this.hurt * 18 + Math.sin(this.time * .8) * 4)),
+      hurt: this.hurt,
+      outcome: this.outcome,
+      blips,
+    };
+  }
+
   private toast(text: string, seconds = 4) { this.state.toast = text; this.toastUntil = this.time + seconds; this.emit(); }
   private clearInput() { this.keys.clear(); this.dragging = null; }
   private bindInput() {
@@ -204,6 +656,8 @@ export class HallWorld {
       this.keys.add(event.code);
       if (event.code === 'KeyE' && !event.repeat) this.interact();
       if (event.code === 'KeyV' && !event.repeat) this.toggleView();
+      if (event.code === 'KeyR' && !event.repeat) this.reload();
+      if (event.code === 'Space' && !event.repeat) { event.preventDefault(); this.fire(); }
     }, options);
     window.addEventListener('keyup', event => { this.keys.delete(event.code); }, options);
     const canvas = this.renderer.domElement;
@@ -224,7 +678,13 @@ export class HallWorld {
       if (!this.dragging || this.dragging.id !== event.pointerId) return;
       const clicked = !this.dragging.moved && performance.now() - this.dragging.time < 300;
       this.dragging = null;
-      if (clicked && this.state.target) this.interact();
+      if (!clicked) return;
+      // On the surface a tap shoots, unless you are standing on the extraction pad.
+      if (this.zone === 'surface') {
+        if (this.state.target) this.interact(); else this.fire();
+        return;
+      }
+      if (this.state.target) this.interact();
     }, options);
     canvas.addEventListener('pointercancel', () => { this.dragging = null; }, options);
     canvas.addEventListener('lostpointercapture', () => { this.dragging = null; }, options);
@@ -271,7 +731,10 @@ export class HallWorld {
     } as const;
     const outcome = outcomes[ending]; this.state.storyOpen = false; this.state.ending = ending; this.state.activated = true; this.state.activation = 1;
     this.state.objective = outcome.objective; this.activationTime = this.time; this.props.glow.color.setHex(outcome.color); this.props.glow.emissive.setHex(outcome.color);
-    this.lights.core.color.setHex(outcome.color); this.audio.tone('power'); this.toast(outcome.text, 8); this.refreshQuestViews(); this.clearInput(); this.emit();
+    this.lights.core.color.setHex(outcome.color); this.audio.tone('power'); this.toast(outcome.text, 8);
+    // The charged ring is now a working teleport: it can drop Mark onto the surface.
+    this.state.objective = '传送环已蓄能 · 回到中央控制台按 E 降至灰烬地表';
+    this.refreshQuestViews(); this.clearInput(); this.emit();
   };
   move = (direction: Direction, pressed: boolean) => {
     const key = { forward: 'KeyW', backward: 'KeyS', left: 'KeyA', right: 'KeyD' }[direction];
@@ -280,11 +743,25 @@ export class HallWorld {
   hold = (_pressed: boolean) => {};
   interact = () => {
     if (this.state.mode !== 'play' || this.state.activeRecord || this.state.dialogue || this.state.storyOpen || this.viewMode !== 'floor') return;
+    // ---- surface: E at the extraction pad ----
+    if (this.zone === 'surface') {
+      const handle = this.surfaceHandle;
+      if (!handle) return;
+      const dist = Math.hypot(this.player.x - handle.beacon.x, this.player.z - handle.beacon.z);
+      if (dist > 4.2) return;
+      const alive = beastsAlive(this.beasts);
+      if (alive > 0) { this.toast(`撤离信标被压制 · 还有 ${alive} 只猎行怪`); return; }
+      this.outcome = 'extracted';
+      this.extract();
+      return;
+    }
     // NPCs take priority when you are standing close to one
     const npc = nearestNpc(this.player);
     if (npc) { this.openDialogue(npc); return; }
     const target = nearestTarget(this.player); if (!target) return;
     if (target.id === 'core') {
+      // Once the ring is charged the console becomes the drop to the surface.
+      if (this.state.activated && this.state.ending && this.surfaceHandle) { this.deploy(); return; }
       if (this.state.ending) { this.toast('你写下的版本已经成为大厅的新现实。仍可继续寻找遗漏的回声。', 5); return; }
       if (!this.inspected.has('power')) { this.toast('供电中断 · 请先调查配电终端'); return; }
       if (this.inspected.size < 4) { this.toast(`叙事样本不足 · 还需找到 ${4 - this.inspected.size} 条回声`); return; }
@@ -299,6 +776,8 @@ export class HallWorld {
     this.emit();
   };
   restart = () => {
+    if (this.zone === 'surface') { this.outcome = 'down'; this.extract(); }
+    this.vitals = createVitals(); this.weapon = createWeapon(); this.hurt = 0; this.outcome = 'alive';
     this.clearInput(); this.inspected.clear(); this.state = { ...initialState, ready: this.state.ready, progress: 100, muted: this.state.muted };
     this.activationTime = -1; this.viewMode = 'floor'; this.player.set(0, .08, 15.9); this.yaw = 0; this.pitch = .17; this.character.rotation.y = Math.PI;
     this.activeNpcId = null; this.questStatus.clear(); for (const q of npcQuests) this.questStatus.set(q.id, 'available');
@@ -410,15 +889,23 @@ export class HallWorld {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) dx -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) dx += 1;
     const length = Math.hypot(dx, dz), sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'), speed = sprinting ? 5.5 : 3.1;
+    const onSurface = this.zone === 'surface';
     if (length > 0) {
       dx /= length; dz /= length;
       const worldX = dx * Math.cos(this.yaw) + dz * Math.sin(this.yaw), worldZ = -dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw);
-      const candidate = constrainMovement(this.player, { x: this.player.x + worldX * speed * dt, z: this.player.z + worldZ * speed * dt });
+      const wanted = { x: this.player.x + worldX * speed * dt, z: this.player.z + worldZ * speed * dt };
+      const candidate = onSurface ? constrainSurface(wanted) : constrainMovement(this.player, wanted);
       this.player.x = candidate.x; this.player.z = candidate.z;
       const facing = Math.atan2(worldX, worldZ); this.character.rotation.y = THREE.MathUtils.damp(this.character.rotation.y, facing, 14, dt);
       if (this.time - this.lastStep > (sprinting ? .3 : .47)) { this.audio.tone('step'); this.lastStep = this.time; }
     }
-    const ground = floorHeight(this.player.x, this.player.z);
+    // On the surface the avatar keeps facing where the camera aims, so shots line up.
+    if (onSurface && length === 0) {
+      this.character.rotation.y = THREE.MathUtils.damp(this.character.rotation.y, this.yaw, 10, dt);
+    }
+    const ground = onSurface
+      ? SURFACE_Y + this.surfaceGroundY(this.player.x, this.player.z)
+      : floorHeight(this.player.x, this.player.z);
     this.player.y = THREE.MathUtils.damp(this.player.y, ground, 12, dt);
     this.character.position.set(this.player.x, this.player.y, this.player.z);
     const stride = length > 0 ? Math.sin(this.time * (sprinting ? 12 : 8)) * (sprinting ? .72 : .48) : 0;
@@ -430,20 +917,58 @@ export class HallWorld {
     this.characterParts.coatRight.rotation.z = .055 + Math.abs(stride) * .06;
     const bob = length > 0 ? Math.abs(Math.sin(this.time * (sprinting ? 12 : 8))) * .045 : 0;
     this.character.position.y += bob;
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const aim = aimVector(this.yaw);
+    const forward = new THREE.Vector3(aim.x, 0, aim.z);
     const focus = new THREE.Vector3(this.player.x, this.player.y + (this.mobile ? 1.48 : 1.55), this.player.z);
-    const cameraDistance = this.mobile ? 7.1 : 5.4;
-    const cameraLift = this.mobile ? 2.65 : 2.15;
-    let desiredCamera = focus.clone().addScaledVector(forward, -cameraDistance).add(new THREE.Vector3(0, cameraLift + this.pitch * 1.25, 0));
+    // Surface combat pulls the camera in over the shoulder so aiming reads clearly.
+    const cameraDistance = onSurface ? (this.mobile ? 6.4 : 5.2) : this.mobile ? 7.1 : 5.4;
+    const cameraLift = onSurface ? (this.mobile ? 2.5 : 2.2) : this.mobile ? 2.65 : 2.15;
+    const shoulder = onSurface ? (this.mobile ? .66 : 1.05) : 0;
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+    // Shift the whole aim frame sideways and up: the avatar drops to the lower-left
+    // and the crosshair looks down clear air instead of the back of his helmet.
+    if (onSurface) {
+      focus.addScaledVector(right, shoulder).setY(focus.y + .42);
+      // shots originate on the crosshair line, not from the avatar's centre
+      this.aimOrigin.set(focus.x, focus.z);
+    }
+    let desiredCamera = focus.clone()
+      .addScaledVector(forward, -cameraDistance)
+      .add(new THREE.Vector3(0, cameraLift + this.pitch * 1.25, 0));
+    if (this.recoil > 0) desiredCamera.addScaledVector(forward, -this.recoil * .12);
     const rayDirection = desiredCamera.clone().sub(focus), rayLength = rayDirection.length();
     this.cameraRay.set(focus, rayDirection.normalize()); this.cameraRay.far = rayLength;
     const obstruction = this.cameraRay.intersectObjects(this.scene.children, true).find(hit => {
-      let object: THREE.Object3D | null = hit.object; while (object) { if (object === this.character || object.userData.npc || object.userData.ashscape) return false; object = object.parent; }
-      return hit.distance > .65 && !(hit.object instanceof THREE.Points) && !(hit.object instanceof THREE.Sprite);
+      let object: THREE.Object3D | null = hit.object;
+      while (object) {
+        // never let the avatar, NPC holograms, beasts or dressing block the lens
+        if (object === this.character || object.userData.npc || object.userData.beast) return false;
+        object = object.parent;
+      }
+      return hit.distance > .65 && !(hit.object instanceof THREE.Points) && !(hit.object instanceof THREE.Sprite) && !(hit.object instanceof THREE.Line);
     });
     if (obstruction) desiredCamera = focus.clone().addScaledVector(rayDirection, Math.max(.85, obstruction.distance - .35));
-    this.camera.position.lerp(desiredCamera, 1 - Math.exp(-dt * 8));
+    if (this.cameraSnap) { this.camera.position.copy(desiredCamera); this.cameraSnap = false; }
+    else this.camera.position.lerp(desiredCamera, 1 - Math.exp(-dt * 8));
     this.camera.lookAt(focus.clone().addScaledVector(forward, 2.2));
+    if (onSurface) {
+      // Weapon recoil kick on the held railgun.
+      if (this.weaponView) {
+        this.weaponView.rotation.x = THREE.MathUtils.damp(this.weaponView.rotation.x, -this.recoil * .34, 14, dt);
+        this.weaponView.position.z = THREE.MathUtils.damp(this.weaponView.position.z, .34 - this.recoil * .1, 14, dt);
+        this.weaponView.position.x = .54; this.weaponView.position.y = 1.44;
+      }
+      const handle = this.surfaceHandle;
+      if (handle) {
+        const dist = Math.hypot(this.player.x - handle.beacon.x, this.player.z - handle.beacon.z);
+        const alive = beastsAlive(this.beasts);
+        this.state.target = dist < 4.2
+          ? { id: 'evac', title: '撤离信标', hint: alive === 0 ? '按 E 撤离' : `先清除 ${alive} 只猎行怪` }
+          : null;
+      }
+      this.state.activation = 0;
+      return;
+    }
     const npc = nearestNpc(this.player);
     if (npc) {
       const raw = this.questStatus.get(npc.id) ?? 'available';
@@ -474,7 +999,19 @@ export class HallWorld {
       this.camera.lookAt(0, 4.2, 0);
     } else if (this.state.mode === 'play' && !this.state.activeRecord && !this.state.storyOpen) this.updatePlayer(dt);
     this.dust.update(this.time); this.shafts(this.time); this.film.uniforms.time.value = milliseconds * .001;
-    this.ashscape?.update(this.time);
+    if (this.zone === 'surface') {
+      // ---- surface frame: enemies, weapon, extraction ----
+      if (this.state.mode === 'play' && !this.state.activeRecord && !this.state.storyOpen) this.stepSurface(dt);
+      this.state.surface = this.surfaceView();
+      this.state.canDeploy = false;
+      this.film.uniforms.time.value = milliseconds * .001;
+      if (this.state.toast && this.time > this.toastUntil) this.state.toast = null;
+      this.composer.render();
+      if (milliseconds - this.lastEmit > 100) { this.lastEmit = milliseconds; this.emit(); }
+      return;
+    }
+    this.state.surface = null;
+    this.state.canDeploy = this.state.activated && !!this.surfaceHandle;
     for (const [id, marker] of Object.entries(this.props.markers)) {
       marker.lookAt(this.camera.position); marker.position.y = 2.12 + Math.sin(this.time * 1.5) * .045;
       marker.visible = this.state.mode === 'play' && !this.state.activeRecord && this.viewMode === 'floor' && (!this.inspected.has(id) || id === 'core') && !(id === 'core' && this.state.activated);
@@ -524,7 +1061,16 @@ export class HallWorld {
   };
 
   /** Read-only local diagnostics: real renderer state, never a gameplay shortcut. */
-  diagnostics() { return { ready: this.state.ready, mode: this.state.mode, player: this.player.toArray(), camera: this.camera.position.toArray(), heading: this.yaw * 180 / Math.PI, pitch: this.pitch * 180 / Math.PI, target: this.state.target?.id ?? null, record: this.state.activeRecord?.title ?? null, objective: this.state.objective, investigated: [...this.inspected], activation: this.state.activation, activated: this.state.activated, overlooking: this.state.overlooking, pixelRatio: this.renderer.getPixelRatio(), ao: this.ao.enabled, quests: this.state.quests.map(q => ({ id: q.id, status: q.status, progress: `${q.current}/${q.goal}` })), progressStats: this.state.progressStats, reward: this.state.reward ? { title: this.state.reward.rewardTitle, exp: this.state.reward.exp, leveledUp: this.state.reward.leveledUp, allDone: this.state.reward.allDone } : null }; }
+  diagnostics() { return { ready: this.state.ready, mode: this.state.mode, player: this.player.toArray(), camera: this.camera.position.toArray(), heading: this.yaw * 180 / Math.PI, pitch: this.pitch * 180 / Math.PI, target: this.state.target?.id ?? null, record: this.state.activeRecord?.title ?? null, objective: this.state.objective, investigated: [...this.inspected], activation: this.state.activation, activated: this.state.activated, overlooking: this.state.overlooking, pixelRatio: this.renderer.getPixelRatio(), ao: this.ao.enabled, quests: this.state.quests.map(q => ({ id: q.id, status: q.status, progress: `${q.current}/${q.goal}` })), progressStats: this.state.progressStats, reward: this.state.reward ? { title: this.state.reward.rewardTitle, exp: this.state.reward.exp, leveledUp: this.state.reward.leveledUp, allDone: this.state.reward.allDone } : null,
+      zone: this.zone, canDeploy: this.state.canDeploy,
+      surface: this.zone === 'surface' ? {
+        hp: this.vitals.hp, armor: this.vitals.armor,
+        mag: this.weapon.mag, reserve: this.weapon.reserve,
+        beastsAlive: beastsAlive(this.beasts), beastsTotal: this.beasts.length,
+        beasts: this.beasts.map(b => ({ id: b.id, hp: b.hp, state: b.state, at: [Math.round(b.x), Math.round(b.z)] })),
+        beacon: this.surfaceHandle ? [Math.round(this.surfaceHandle.beacon.x), Math.round(this.surfaceHandle.beacon.z)] : null,
+        outcome: this.outcome,
+      } : null }; }
 
   private registerAgentControls() {
     const context = (document as Document & { modelContext?: { registerTool(tool: unknown, options?: { signal: AbortSignal }): void | Promise<void> } }).modelContext;
@@ -532,7 +1078,7 @@ export class HallWorld {
     const register = (tool: unknown) => { try { void Promise.resolve(context.registerTool(tool, { signal: this.abort.signal })).catch(error => console.warn('Agent controls unavailable', error)); } catch (error) { console.warn('Agent controls unavailable', error); } };
     register({ name: 'read_hall_state', title: 'Read exploration state', description: 'Read the current local hall exploration status, player position, heading, nearby interaction and investigation progress.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true }, execute: () => this.diagnostics() });
     register({ name: 'control_hall_exploration', title: 'Control hall exploration', description: 'Play the hall using the same actions as keyboard/touch. Start, move for up to 4 seconds, turn to a heading (0 faces north, -90 east), inspect a nearby terminal, close its record, or hold the powered core. Movement respects collisions and core activation requires power and proximity. Only changes this local game session.',
-      inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'tour', 'pause', 'resume', 'restart', 'move', 'look', 'interact', 'close_record', 'hold_core', 'view'] }, direction: { type: 'string', enum: ['forward', 'backward', 'left', 'right'] }, seconds: { type: 'number', minimum: .05, maximum: 4 }, heading: { type: 'number', minimum: -360, maximum: 360 }, pitch: { type: 'number', minimum: -54, maximum: 67 } }, required: ['action'], additionalProperties: false }, annotations: { readOnlyHint: false },
+      inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'tour', 'pause', 'resume', 'restart', 'move', 'look', 'interact', 'close_record', 'hold_core', 'view', 'deploy', 'fire', 'reload', 'extract'] }, direction: { type: 'string', enum: ['forward', 'backward', 'left', 'right'] }, seconds: { type: 'number', minimum: .05, maximum: 4 }, heading: { type: 'number', minimum: -360, maximum: 360 }, pitch: { type: 'number', minimum: -54, maximum: 67 } }, required: ['action'], additionalProperties: false }, annotations: { readOnlyHint: false },
       execute: async (input: unknown) => {
         if (!input || typeof input !== 'object' || !('action' in input)) throw new Error('action is required');
         const args = input as { action: string; direction?: Direction; seconds?: number; heading?: number; pitch?: number };
@@ -550,6 +1096,10 @@ export class HallWorld {
             case 'restart': this.restart(); break;
             case 'close_record': this.closeRecord(); break;
             case 'view': this.toggleView(); break;
+            case 'deploy': this.deploy(); break;
+            case 'fire': this.fire(); break;
+            case 'reload': this.reload(); break;
+            case 'extract': this.extract(); break;
             case 'interact': if (!nearestTarget(this.player)) throw new Error('No terminal within reach'); this.interact(); break;
             case 'move':
               if (this.state.mode !== 'play' || this.state.activeRecord || this.state.overlooking) throw new Error('Return to ground exploration before moving');

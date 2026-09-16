@@ -19,9 +19,26 @@ export class HallAudio {
     noise.connect(filter); filter.connect(gain); noise.start(); this.sources.push(noise);
   }
   mute(value: boolean) { this.muted = value; if (this.gain && this.context) this.gain.gain.setTargetAtTime(value ? 0 : .28, this.context.currentTime, .1); }
-  tone(kind: 'step' | 'scan' | 'power') {
+  tone(kind: 'step' | 'scan' | 'power' | 'shot' | 'hurt') {
     const ctx = this.context; if (!ctx || !this.gain) return;
     const t = ctx.currentTime, osc = ctx.createOscillator(), g = ctx.createGain();
+    if (kind === 'shot') {
+      // railgun crack: fast descending zap
+      osc.type = 'square'; osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(120, t + .12);
+      g.gain.setValueAtTime(.075, t); g.gain.exponentialRampToValueAtTime(.0001, t + .16);
+      osc.connect(g); g.connect(this.gain); osc.start(t); osc.stop(t + .18);
+      osc.onended = () => { osc.disconnect(); g.disconnect(); };
+      return;
+    }
+    if (kind === 'hurt') {
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(190, t);
+      osc.frequency.exponentialRampToValueAtTime(48, t + .34);
+      g.gain.setValueAtTime(.1, t); g.gain.exponentialRampToValueAtTime(.0001, t + .4);
+      osc.connect(g); g.connect(this.gain); osc.start(t); osc.stop(t + .42);
+      osc.onended = () => { osc.disconnect(); g.disconnect(); };
+      return;
+    }
     const power = kind === 'power', duration = power ? 4.5 : kind === 'step' ? .13 : .6;
     osc.type = power ? 'sine' : 'triangle'; osc.frequency.setValueAtTime(power ? 42 : kind === 'step' ? 100 : 420, t);
     osc.frequency.exponentialRampToValueAtTime(power ? 180 : kind === 'step' ? 35 : 850, t + duration);

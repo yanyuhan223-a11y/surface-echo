@@ -64,7 +64,7 @@ function buildNpc(color: number): { group: THREE.Group; marker: THREE.Sprite; ri
   return { group, marker: sprite, ring, draw };
 }
 
-export function createNpcs(scene: THREE.Scene) {
+export function createNpcs(scene: THREE.Object3D) {
   const visuals: (NpcVisual & { draw: (g: string, c: string) => void })[] = [];
   for (const q of npcQuests) {
     const built = buildNpc(q.color);

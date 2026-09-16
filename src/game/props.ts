@@ -16,7 +16,7 @@ function screen(lines: string[], w: number, h: number) {
 }
 function box(w: number, h: number, d: number, material: THREE.Material) { return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material); }
 
-export function createProps(scene: THREE.Scene) {
+export function createProps(scene: THREE.Object3D) {
   const steel = new THREE.MeshStandardMaterial({ color: '#35444a', metalness: .8, roughness: .4 });
   const edge = new THREE.MeshStandardMaterial({ color: '#55646b', metalness: .85, roughness: .35 });
   const dark = new THREE.MeshStandardMaterial({ color: '#0b1418', metalness: .7, roughness: .55 });
